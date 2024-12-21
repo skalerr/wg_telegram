@@ -26,7 +26,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Устанавливаем зависимости проекта
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Копируем файлы проекта в контейнер
 COPY . .
