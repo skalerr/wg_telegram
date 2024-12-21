@@ -31,8 +31,18 @@ echo "[Interface]
 PrivateKey = ${var_private_key}
 Address = 10.10.0.1/24
 ListenPort = 51830
-PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${internet_interface} -j MASQUERADE
-PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${internet_interface} -j MASQUERADE
+PostUp = iptables -I INPUT -p udp --dport 49990 -j ACCEPT
+PostUp = iptables -I FORWARD -i eth0 -o wg0 -j ACCEPT
+PostUp = iptables -I FORWARD -i wg0 -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostUp = ip6tables -I FORWARD -i wg0 -j ACCEPT
+PostUp = ip6tables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostDown = iptables -D INPUT -p udp --dport 49990 -j ACCEPT
+PostDown = iptables -D FORWARD -i eth0 -o wg0 -j ACCEPT
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+PostDown = ip6tables -D FORWARD -i wg0 -j ACCEPT
+PostDown = ip6tables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
 " | tee -a /etc/wireguard/wg0.conf
 
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
@@ -41,3 +51,6 @@ sysctl -p
 # Вместо использования systemctl
 wg-quick up wg0
 
+
+# PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${internet_interface} -j MASQUERADE
+# PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${internet_interface} -j MASQUERADE
