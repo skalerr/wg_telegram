@@ -21,7 +21,7 @@ fi
 
 # Вывод информации
 #echo "Веб-интерфейс с доступом в интернет:"
-ip_address_glob=$(curl -s ifconfig.me)
+ip_address_glob=$(curl -s -4 ifconfig.me)
 echo "Полученный IP-адрес: $ip_address_glob"
 #echo "internet_interface=$internet_interface" > variables.sh
 echo "Имя интерфейса: $internet_interface"

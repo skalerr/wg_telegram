@@ -6,7 +6,7 @@ apt install -y wireguard iptables fish zip unzip iproute2
 rm cofigs.txt
 touch cofigs.txt
 echo "vap_ip_local=1" > variables.sh
-ip_address_glob=$(curl -s ifconfig.me)
+ip_address_glob=$(curl -s -4 ifconfig.me)
 echo "ip_address_glob=$ip_address_glob" >> variables.sh
 
 internet_interface=$(ip a | awk '/^[0-9]+: .* state UP/ {gsub(/:/,"",$2); print $2}' | grep -E '^ens[0-9]+')
@@ -43,6 +43,8 @@ PostDown = iptables -D FORWARD -i wg0 -j ACCEPT
 PostDown = iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
 PostDown = ip6tables -D FORWARD -i wg0 -j ACCEPT
 PostDown = ip6tables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${internet_interface} -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${internet_interface} -j MASQUERADE
 " | tee -a /etc/wireguard/wg0.conf
 
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
@@ -51,6 +53,3 @@ sysctl -p
 # Вместо использования systemctl
 wg-quick up wg0
 
-
-# PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${internet_interface} -j MASQUERADE
-# PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${internet_interface} -j MASQUERADE
