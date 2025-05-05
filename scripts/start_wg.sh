@@ -1,5 +1,5 @@
 #!/bin/bash
-source ./variables.sh
+source /app/scripts/variables.sh
 apt update
 apt install -y wireguard iptables fish zip unzip iproute2
 
