@@ -1,4 +1,5 @@
 #!/bin/bash
+#start_wg.sh
 source variables.sh
 apt update
 apt install -y wireguard iptables fish zip unzip iproute2

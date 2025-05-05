@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#backup.sh
 # Путь к исходной директории
 SOURCE_DIR="/etc/wireguard/"
 

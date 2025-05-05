@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#restore.sh
 # Получение пути к директории, в которой находится скрипт restore.sh
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 

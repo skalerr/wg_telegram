@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#del_cl.sh
 ip=$1
 my_variable=$(grep -n "10.10.0.${ip}" /etc/wireguard/wg0.conf | cut -d ':' -f 1)
 

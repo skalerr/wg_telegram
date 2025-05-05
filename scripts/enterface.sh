@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#enterface.sh
 # Получение имени интерфейса с доступом в интернет
 internet_interface=$(ip a | awk '/^[0-9]+: .* state UP/ {gsub(/:/,"",$2); print $2}' | grep -E '^ens[0-9]+')
 

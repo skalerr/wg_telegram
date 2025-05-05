@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#rm_user.sh
 ip_address=$1
 ip_address=10.10.0.$ip_address
 file_path="cofigs.txt"
