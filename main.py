@@ -97,34 +97,71 @@ def del_vpn(message):
 
 
 
-def add_vpn(message):
-    if message.chat.id in mainid:
-#        bot.send_message(message.chat.id, text="Привет избранный!!")
-        if message.sticker is not None:
-            # Если пользователь отправил стикер вместо текста
-            bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не стикер.')
-            buttons(message)
-        elif message.voice is not None:
-            bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не голосовое сообщение.')
-            buttons(message)
-        elif message.document is not None:
-            bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не документ.')
-            buttons(message)
-        else:
-            # Обработка текстового сообщения
-#            bot.reply_to(message, 'Вы отправили текстовое сообщение.')
-            config_string = check_message(message.text)
-            subprocess.run(['scripts/add_cl.sh', config_string])
-            bot.send_message(message.chat.id, f"Конфиг {config_string}.conf создан")
-            config_file_path = f"/etc/wireguard/{config_string}_cl.conf"
-            qr(config_file_path, message.chat.id)
-            with open(config_file_path, 'rb') as file:
-                bot.send_document(message.chat.id, file)
-            with open(config_file_path, 'r') as file:
-                config_content = file.read()
-            bot.send_message(message.chat.id, config_content)
-            bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
-            buttons(message)
+# Вставьте этот блок вместо существующего обработчика "Добавить_конфиг" и функции add_vpn
+
+# Кнопки выбора метода назначения IP
+def choose_ip_method(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn_auto = types.KeyboardButton("Авто-IP")
+    btn_manual = types.KeyboardButton("Указать_IP")
+    btn_back = types.KeyboardButton("Назад")
+    markup.add(btn_auto, btn_manual, btn_back)
+    bot.send_message(message.chat.id, "Выберите метод назначения IP:", reply_markup=markup)
+    bot.register_next_step_handler(message, add_vpn_mode_handler)
+
+# Обработчик выбора режима
+def add_vpn_mode_handler(message):
+    text = message.text
+    if text == "Авто-IP":
+        bot.send_message(message.chat.id, "Введите имя для нового конфига:", reply_markup=types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(message, add_vpn_auto)
+    elif text == "Указать_IP":
+        bot.send_message(message.chat.id, "Введите имя для нового конфига:", reply_markup=types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(message, lambda m: request_custom_ip(m))
+    else:
+        buttons(message)
+
+# Автоматическое назначение IP (как раньше)
+def add_vpn_auto(message):
+    username = check_message(message.text)
+    # Вызов скрипта без указания IP, он сам инкрементирует vap_ip_local
+    subprocess.run(['scripts/add_cl.sh', username])
+    send_config_to_user(message.chat.id, username)
+    buttons(message)
+
+# Запрос custom IP после имени
+def request_custom_ip(message):
+    # сохраняем имя для последующего использования
+    message.user_config = {
+        'username': check_message(message.text)
+    }
+    bot.send_message(message.chat.id, "Введите последний октет IP (2-253):")
+    bot.register_next_step_handler(message, add_vpn_custom)
+
+# Пользовательское назначение IP
+def add_vpn_custom(message):
+    octet = message.text.strip()
+    username = message.user_config['username']
+    if not check_number_in_range(octet):
+        bot.send_message(message.chat.id, "Неверный диапазон. Введите число от 2 до 253.")
+        return request_custom_ip(message)
+    # Передаем IP-октет в скрипт: второй аргумент
+    subprocess.run(['scripts/add_cl.sh', username, octet])
+    send_config_to_user(message.chat.id, username)
+    buttons(message)
+
+# Вспомогательная отправка конфига и QR
+def send_config_to_user(chat_id, username):
+    conf_name = f"{username}_cl.conf"
+    bot.send_message(chat_id, f"Конфиг {conf_name} создан")
+    path = f"/etc/wireguard/{conf_name}"
+    qr(path, chat_id)
+    with open(path, 'rb') as f:
+        bot.send_document(chat_id, f)
+    with open(path, 'r') as f:
+        bot.send_message(chat_id, f.read())
+    bot.send_message(chat_id, "Конфигурационный файл успешно отправлен.")
+
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -179,7 +216,7 @@ def func(message):
             bot.register_next_step_handler(message, del_vpn)
         elif message.text == "Добавить_конфиг":
             bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
-            bot.register_next_step_handler(message, add_vpn)
+            bot.register_next_step_handler(message, add_vpn_custom)
         elif message.text == "Конфиги":
             bot.send_message(message.chat.id, "Вот ваша конфигурация Wireguard")
             config_file_path = f"/etc/wireguard/wg0.conf"
