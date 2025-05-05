@@ -88,11 +88,11 @@ def del_vpn(message):
             script_path = os.path.dirname(os.path.realpath(__file__))
             rm_user_script = os.path.join(script_path, "rm_user.sh")
             subprocess.run([rm_user_script, config_string])
-            bot.send_message(message.chat.id, f"IP-адрес 10.10.0.{config_string} успешно удален.")
+            bot.send_message(message.chat.id, f"IP-адрес {wg_local_ip_hint}.{config_string} успешно удален.")
             print(f"{message.text} находится в допустимом диапазоне.")
         else:
             print(f"{message.text} не находится в допустимом диапазоне.")
-            bot.send_message(message.chat.id, f"IP-адрес 10.10.0.{config_string} не может быть удален. Ввведите число от 2 до 253")
+            bot.send_message(message.chat.id, f"IP-адрес {wg_local_ip_hint}.{config_string} не может быть удален. Ввведите число от 2 до 253")
     buttons(message)
 
 
@@ -175,7 +175,7 @@ def func(message):
             with open(config_file_path_txt, 'rb') as file:
                 config_content = file.read()
             bot.send_message(message.chat.id, config_content)
-            bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить. Например если нужно удалить ip адресс 10.10.0.47, то введите 47")
+            bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить. Например если нужно удалить ip адресс {wg_local_ip_hint}.47, то введите 47")
             bot.register_next_step_handler(message, del_vpn)
         elif message.text == "Добавить_конфиг":
             bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())

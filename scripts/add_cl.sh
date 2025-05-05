@@ -2,7 +2,7 @@
 
 var_username=$1
 var_ip_address_glob2="$ip_address_glob"
-source variables.sh
+source ./variables.sh
 ((vap_ip_local++))
 
 # Запрос имени пользователя
@@ -11,7 +11,7 @@ source variables.sh
 wg genkey | tee "/etc/wireguard/${var_username}_privatekey" | wg pubkey | tee "/etc/wireguard/${var_username}_publickey" > /dev/null
 echo "[Peer]" >> /etc/wireguard/wg0.conf
 echo "PublicKey = $(cat "/etc/wireguard/${var_username}_publickey")" >> /etc/wireguard/wg0.conf
-echo "AllowedIPs = 10.10.0.${vap_ip_local}/32" >> /etc/wireguard/wg0.conf
+echo "AllowedIPs = $wg_local_ip_hint.${vap_ip_local}/32" >> /etc/wireguard/wg0.conf
 
 # Перезапускаем WireGuard интерфейс
 wg-quick down wg0
@@ -29,7 +29,7 @@ ls -la "/etc/wireguard"
 
 echo "[Interface]
 PrivateKey = $(cat "/etc/wireguard/${var_username}_privatekey")
-Address = 10.10.0.${vap_ip_local}/24
+Address = $wg_local_ip_hint.${vap_ip_local}/24
 DNS = 8.8.8.8
 
 [Peer]
@@ -47,7 +47,7 @@ grep -q "vap_ip_local=" variables.sh && sed -i "s/vap_ip_local=.*/vap_ip_local=$
 
 echo "ip_address_glob=${ip_address_glob}" >> variables.sh
 echo "Новый клиент ${var_username} добавлен."
-echo "10.10.0.${vap_ip_local} = ${var_username}" >> cofigs.txt
+echo "$wg_local_ip_hint.${vap_ip_local} = ${var_username}" >> cofigs.txt
 
 exit 0
 

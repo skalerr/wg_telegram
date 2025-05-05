@@ -1,5 +1,5 @@
 #!/bin/bash
-source variables.sh
+source ./variables.sh
 apt update
 apt install -y wireguard iptables fish zip unzip iproute2
 
@@ -29,7 +29,7 @@ echo "var_private_key=\"$var_private_key\"" >> variables.sh
 echo "var_public_key=\"$var_public_key\"" >> variables.sh
 echo "[Interface]
 PrivateKey = ${var_private_key}
-Address = 10.10.0.1/24
+Address = ${wg_local_ip}/24
 ListenPort = 51830
 PostUp = iptables -I INPUT -p udp --dport 49990 -j ACCEPT
 PostUp = iptables -I FORWARD -i eth0 -o wg0 -j ACCEPT

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ip_address=$1
-ip_address=10.10.0.$ip_address
+ip_address=$wg_local_ip_hint.$ip_address
 file_path="cofigs.txt"
 
 # Проверяем, передан ли IP-адрес в качестве аргумента
