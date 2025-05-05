@@ -64,8 +64,10 @@ def buttons(message):
     botton32 = types.KeyboardButton("Конфиги")
     botton42 = types.KeyboardButton("Удалить_конфиг")
     botton41 = types.KeyboardButton("Добавить_конфиг")
+    botton51 = types.KeyboardButton("Полное_удаление")
+
     back = types.KeyboardButton("Назад")
-    markup.add(botton32, botton41, botton42, back)
+    markup.add(botton32, botton41, botton42, botton51, back)
     bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
 
 def del_vpn(message):
@@ -126,6 +128,23 @@ def add_vpn(message):
             bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
             buttons(message)
 
+# --- Полное удаление WireGuard ---
+def uninstall_wireguard(message):
+    chat_id = message.chat.id
+    bot.send_message(chat_id, "Удаляю WireGuard и конфигурации...")
+    # Останавливаем и отключаем сервис
+    subprocess.run("systemctl stop wg-quick@wg0", shell=True)
+    subprocess.run("systemctl disable wg-quick@wg0", shell=True)
+    # Удаляем пакеты
+    subprocess.run("apt-get remove -y wireguard wireguard-tools qrencode", shell=True)
+    # Удаляем настройки
+    subprocess.run("rm -rf /etc/wireguard", shell=True)
+    subprocess.run("rm -f /etc/sysctl.d/wg.conf", shell=True)
+    # Применяем sysctl
+    subprocess.run("sysctl --system", shell=True)
+    bot.send_message(chat_id, "WireGuard успешно удалён.")
+    buttons(message)
+
 @bot.message_handler(commands=['start'])
 def start(message):
     if message.chat.id in mainid:
@@ -180,6 +199,8 @@ def func(message):
         elif message.text == "Добавить_конфиг":
             bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
             bot.register_next_step_handler(message, add_vpn)
+        elif message.text == "Полное_удаление":
+            uninstall_wireguard(message)
         elif message.text == "Конфиги":
             bot.send_message(message.chat.id, "Вот ваша конфигурация Wireguard")
             config_file_path = f"/etc/wireguard/wg0.conf"
