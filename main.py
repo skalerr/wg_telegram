@@ -64,10 +64,9 @@ def buttons(message):
     botton32 = types.KeyboardButton("Конфиги")
     botton42 = types.KeyboardButton("Удалить_конфиг")
     botton41 = types.KeyboardButton("Добавить_конфиг")
-    botton51 = types.KeyboardButton("Полное_удаление")
 
     back = types.KeyboardButton("Назад")
-    markup.add(botton32, botton41, botton42, botton51, back)
+    markup.add(botton32, botton41, botton42, back)
     bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
 
 def del_vpn(message):
@@ -137,7 +136,7 @@ def uninstall_wireguard(message):
     subprocess.run("wg-quick down wg0", shell=True)
     subprocess.run("systemctl disable wg-quick@wg0", shell=True)
     # Удаляем пакеты
-    subprocess.run("apt-get remove -y wireguard wireguard-tools qrencode", shell=True)
+    subprocess.run("apt-get remove -y wireguard qrencode", shell=True) #wireguard-tools
     # Удаляем настройки
     subprocess.run("rm -rf /etc/wireguard", shell=True)
     subprocess.run("rm -f /etc/sysctl.d/wg.conf", shell=True)
@@ -184,10 +183,11 @@ def func(message):
 #                bot.send_message(message.chat.id, text="Привет хозяин")
                 markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
                 botton22 = types.KeyboardButton("Установка_Wireguard")
+                botton23 = types.KeyboardButton("Полное_удаление")
                 botton_reset = types.KeyboardButton("Сохранить_конигурацию")
                 botton_reset_up = types.KeyboardButton("Импортировать_конигурацию")
                 back = types.KeyboardButton("Назад")
-                markup.add(botton22, botton_reset, botton_reset_up, back)
+                markup.add(botton22, botton23, botton_reset, botton_reset_up, back)
                 bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
         elif message.text == "Удалить_конфиг":
             bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить.", reply_markup=types.ReplyKeyboardRemove())
