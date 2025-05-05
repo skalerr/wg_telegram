@@ -142,6 +142,7 @@ def uninstall_wireguard(message):
     subprocess.run("rm -f /etc/sysctl.d/wg.conf", shell=True)
     # Применяем sysctl
     subprocess.run("sysctl --system", shell=True)
+    
     bot.send_message(chat_id, "WireGuard успешно удалён.")
     buttons(message)
 
@@ -201,7 +202,14 @@ def func(message):
             bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
             bot.register_next_step_handler(message, add_vpn)
         elif message.text == "Полное_удаление":
+                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+                botton_yes = types.KeyboardButton("Да удалить НАВСЕГДА")
+                botton_no = types.KeyboardButton("Нет")
+                markup.add(botton_yes, botton_no)
+                bot.send_message(message.chat.id, text="Wireguard будет удален навсегда со всеми настройками. \nХотите продолжить?", reply_markup=markup)
+        elif (message.text == "Да удалить НАВСЕГДА"):
             uninstall_wireguard(message)
+
         elif message.text == "Конфиги":
             bot.send_message(message.chat.id, "Вот ваша конфигурация Wireguard")
             config_file_path = f"/etc/wireguard/wg0.conf"

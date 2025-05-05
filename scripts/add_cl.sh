@@ -34,6 +34,7 @@ echo "[Interface]
 PrivateKey = $(cat "/etc/wireguard/${var_username}_privatekey")
 Address = $wg_local_ip_hint.${vap_ip_local}/24
 DNS = 8.8.8.8
+MTU = 1332
 
 [Peer]
 PublicKey = ${var_public_key}
