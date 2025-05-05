@@ -7,8 +7,63 @@ import sys
 import os
 import glob
 import qrcode
+import re
 from config import *
 #from config import *
+
+class ServerConfig:
+    def __init__(self):
+        self.ip_base = "10.20.20"  # Default IP base
+        self.port = "51830"        # Default port
+        self.next_ip = 2           # Start from .2
+        self.load_config()
+    
+    def load_config(self):
+        try:
+            with open('server_config.txt', 'r') as f:
+                lines = f.readlines()
+                for line in lines:
+                    if '=' in line:
+                        key, value = line.strip().split('=')
+                        if key == 'ip_base':
+                            self.ip_base = value
+                        elif key == 'port':
+                            self.port = value
+                        elif key == 'next_ip':
+                            self.next_ip = int(value)
+        except FileNotFoundError:
+            self.save_config()
+    
+    def save_config(self):
+        with open('server_config.txt', 'w') as f:
+            f.write(f"ip_base={self.ip_base}\n")
+            f.write(f"port={self.port}\n")
+            f.write(f"next_ip={self.next_ip}\n")
+    
+    def get_next_ip(self):
+        current = self.next_ip
+        self.next_ip += 1
+        self.save_config()
+        return f"{self.ip_base}.{current}"
+    
+    def remove_ip(self, last_octet):
+        # No need to decrement next_ip as we want to keep moving forward
+        pass
+
+    def validate_ip_base(self, ip_base):
+        pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){2}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+        return bool(re.match(pattern, ip_base))
+    
+    def validate_port(self, port):
+        try:
+            port_num = int(port)
+            return 1024 <= port_num <= 65535
+        except ValueError:
+            return False
+
+# Create global server config instance
+server_config = ServerConfig()
+
 config = ""
 # Создаем экземпляр бота
 bot = telebot.TeleBot(api_tg)
@@ -70,7 +125,6 @@ def buttons(message):
 
 def del_vpn(message):
     if message.sticker is not None:
-        # Если пользователь отправил стикер вместо текста
         bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не стикер.')
         buttons(message)
     elif message.voice is not None:
@@ -80,28 +134,22 @@ def del_vpn(message):
         bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не документ.')
         buttons(message)
     else:
-        # Обработка текстового сообщения
-        bot.reply_to(message, 'Вы отправили текстовое сообщение.')
         config_string = check_message(message.text)
         if check_number_in_range(message.text):
             subprocess.run(['scripts/del_cl.sh', config_string])
             script_path = os.path.dirname(os.path.realpath(__file__))
             rm_user_script = os.path.join(script_path, "rm_user.sh")
-            subprocess.run([rm_user_script, config_string])
-            bot.send_message(message.chat.id, f"IP-адрес 10.10.0.{config_string} успешно удален.")
+            subprocess.run([rm_user_script, f"{server_config.ip_base}.{config_string}"])
+            bot.send_message(message.chat.id, f"IP-адрес {server_config.ip_base}.{config_string} успешно удален.")
             print(f"{message.text} находится в допустимом диапазоне.")
         else:
             print(f"{message.text} не находится в допустимом диапазоне.")
-            bot.send_message(message.chat.id, f"IP-адрес 10.10.0.{config_string} не может быть удален. Ввведите число от 2 до 253")
+            bot.send_message(message.chat.id, f"IP-адрес {server_config.ip_base}.{config_string} не может быть удален. Введите число от 2 до 253")
     buttons(message)
-
-
 
 def add_vpn(message):
     if message.chat.id in mainid:
-#        bot.send_message(message.chat.id, text="Привет избранный!!")
         if message.sticker is not None:
-            # Если пользователь отправил стикер вместо текста
             bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не стикер.')
             buttons(message)
         elif message.voice is not None:
@@ -111,11 +159,10 @@ def add_vpn(message):
             bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не документ.')
             buttons(message)
         else:
-            # Обработка текстового сообщения
-#            bot.reply_to(message, 'Вы отправили текстовое сообщение.')
             config_string = check_message(message.text)
-            subprocess.run(['scripts/add_cl.sh', config_string])
-            bot.send_message(message.chat.id, f"Конфиг {config_string}.conf создан")
+            next_ip = server_config.get_next_ip()
+            subprocess.run(['scripts/add_cl.sh', config_string, next_ip, server_config.port])
+            bot.send_message(message.chat.id, f"Конфиг {config_string}.conf создан с IP {next_ip}")
             config_file_path = f"/etc/wireguard/{config_string}_cl.conf"
             qr(config_file_path, message.chat.id)
             with open(config_file_path, 'rb') as file:
@@ -161,14 +208,21 @@ def func(message):
             buttons(message)
         elif(message.text == "Администрирование"):
             if (1==1):
-#                bot.send_message(message.chat.id, text="Привет хозяин")
                 markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
                 botton22 = types.KeyboardButton("Установка_Wireguard")
                 botton_reset = types.KeyboardButton("Сохранить_конигурацию")
                 botton_reset_up = types.KeyboardButton("Импортировать_конигурацию")
+                botton_server_ip = types.KeyboardButton("Изменить_базовый_IP")
+                botton_server_port = types.KeyboardButton("Изменить_порт")
                 back = types.KeyboardButton("Назад")
-                markup.add(botton22, botton_reset, botton_reset_up, back)
+                markup.add(botton22, botton_reset, botton_reset_up, botton_server_ip, botton_server_port, back)
                 bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
+        elif message.text == "Изменить_базовый_IP":
+            bot.send_message(message.chat.id, f"Текущий базовый IP: {server_config.ip_base}\nВведите новый базовый IP (например, 10.20.20):", reply_markup=types.ReplyKeyboardRemove())
+            bot.register_next_step_handler(message, change_base_ip)
+        elif message.text == "Изменить_порт":
+            bot.send_message(message.chat.id, f"Текущий порт: {server_config.port}\nВведите новый порт (1024-65535):", reply_markup=types.ReplyKeyboardRemove())
+            bot.register_next_step_handler(message, change_port)
         elif message.text == "Удалить_конфиг":
             bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить.", reply_markup=types.ReplyKeyboardRemove())
             config_file_path_txt = f"cofigs.txt"
@@ -264,6 +318,28 @@ def func(message):
         print(message_text)
     elif(str(message.chat.id) != mainid):
         bot.send_message(message.chat.id, text="Привет, {0.first_name}! Ты заплутал!!".format(message.from_user))
+
+def change_base_ip(message):
+    if message.chat.id in mainid:
+        new_ip_base = message.text.strip()
+        if server_config.validate_ip_base(new_ip_base):
+            server_config.ip_base = new_ip_base
+            server_config.save_config()
+            bot.send_message(message.chat.id, f"Базовый IP успешно изменен на {new_ip_base}")
+        else:
+            bot.send_message(message.chat.id, "Неверный формат IP. Пожалуйста, используйте формат X.X.X (например, 10.20.20)")
+    buttons(message)
+
+def change_port(message):
+    if message.chat.id in mainid:
+        new_port = message.text.strip()
+        if server_config.validate_port(new_port):
+            server_config.port = new_port
+            server_config.save_config()
+            bot.send_message(message.chat.id, f"Порт успешно изменен на {new_port}")
+        else:
+            bot.send_message(message.chat.id, "Неверный формат порта. Пожалуйста, введите число от 1024 до 65535")
+    buttons(message)
 
 bot.polling(none_stop=True)
 

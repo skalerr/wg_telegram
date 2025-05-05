@@ -3,11 +3,23 @@ source variables.sh
 apt update
 apt install -y wireguard iptables fish zip unzip iproute2
 
-rm cofigs.txt
+rm -f cofigs.txt
 touch cofigs.txt
-echo "vap_ip_local=1" > variables.sh
+
+# Load server configuration
+if [ -f "server_config.txt" ]; then
+    source server_config.txt
+else
+    ip_base="10.20.20"
+    port="51830"
+    next_ip=2
+    echo "ip_base=$ip_base" > server_config.txt
+    echo "port=$port" >> server_config.txt
+    echo "next_ip=$next_ip" >> server_config.txt
+fi
+
 ip_address_glob=$(curl -s -4 ifconfig.me)
-echo "ip_address_glob=$ip_address_glob" >> variables.sh
+echo "ip_address_glob=$ip_address_glob" > variables.sh
 
 internet_interface=$(ip a | awk '/^[0-9]+: .* state UP/ {gsub(/:/,"",$2); print $2}' | grep -E '^ens[0-9]+')
 if [ -z "$internet_interface" ]; then
@@ -29,15 +41,15 @@ echo "var_private_key=\"$var_private_key\"" >> variables.sh
 echo "var_public_key=\"$var_public_key\"" >> variables.sh
 echo "[Interface]
 PrivateKey = ${var_private_key}
-Address = 10.10.0.1/24
-ListenPort = 51830
-PostUp = iptables -I INPUT -p udp --dport 49990 -j ACCEPT
+Address = ${ip_base}.1/24
+ListenPort = ${port}
+PostUp = iptables -I INPUT -p udp --dport ${port} -j ACCEPT
 PostUp = iptables -I FORWARD -i eth0 -o wg0 -j ACCEPT
 PostUp = iptables -I FORWARD -i wg0 -j ACCEPT
 PostUp = iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 PostUp = ip6tables -I FORWARD -i wg0 -j ACCEPT
 PostUp = ip6tables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-PostDown = iptables -D INPUT -p udp --dport 49990 -j ACCEPT
+PostDown = iptables -D INPUT -p udp --dport ${port} -j ACCEPT
 PostDown = iptables -D FORWARD -i eth0 -o wg0 -j ACCEPT
 PostDown = iptables -D FORWARD -i wg0 -j ACCEPT
 PostDown = iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
@@ -48,7 +60,7 @@ PostDown = ip6tables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 sysctl -p
 
-# Вместо использования systemctl
+# Start WireGuard
 wg-quick up wg0
 
 # PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${internet_interface} -j MASQUERADE
