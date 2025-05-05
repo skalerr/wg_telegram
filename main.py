@@ -136,7 +136,7 @@ def uninstall_wireguard(message):
     subprocess.run("wg-quick down wg0", shell=True)
     subprocess.run("systemctl disable wg-quick@wg0", shell=True)
     # Удаляем пакеты
-    subprocess.run("apt-get remove -y wireguard qrencode", shell=True) #wireguard-tools
+    subprocess.run("apt-get remove -y wireguard wireguard-tools qrencode", shell=True) #wireguard-tools
     # Удаляем настройки
     subprocess.run("rm -rf /etc/wireguard", shell=True)
     subprocess.run("rm -f /etc/sysctl.d/wg.conf", shell=True)
