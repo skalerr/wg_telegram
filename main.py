@@ -207,7 +207,7 @@ def func(message):
                 botton_no = types.KeyboardButton("Нет")
                 markup.add(botton_yes, botton_no)
                 bot.send_message(message.chat.id, text="Wireguard будет удален навсегда со всеми настройками. \nХотите продолжить?", reply_markup=markup)
-        elif (message.text == "Да удалить НАВСЕГДА"):
+        elif (message.text == "ДА УДАЛИТЬ НАВСЕГДА"):
             uninstall_wireguard(message)
 
         elif message.text == "Конфиги":
