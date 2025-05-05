@@ -30,9 +30,8 @@ RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Копируем файлы проекта в контейнер
 COPY . .
-COPY variables.sh /app/variables.sh
 COPY scripts/ /app/scripts/
-
+COPY scripts/variables.sh /app/variables.sh
 # Настраиваем переменные окружения, если необходимо
 ENV VARIABLE_NAME=value
 
