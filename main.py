@@ -169,6 +169,33 @@ def set_vpn_port(message):
             bot.send_message(message.chat.id, "Invalid port number. Please use a number between 1024 and 65535")
         buttons(message)
 
+def remove_wireguard(message):
+    if message.chat.id in mainid:
+        if message.text == "Да":
+            bot.send_message(message.chat.id, "Удаляю WireGuard и все конфигурации...")
+            # Stop WireGuard service
+            subprocess.run(['wg-quick', 'down', 'wg0'], capture_output=True)
+            # Remove WireGuard directory and configurations
+            subprocess.run(['rm', '-rf', '/etc/wireguard/'], capture_output=True)
+            # Remove configuration files
+            subprocess.run(['rm', '-f', 'variables.sh', 'cofigs.txt'], capture_output=True)
+            # Remove WireGuard package
+            # subprocess.run(['apt-get', 'remove', '-y', 'wireguard'], capture_output=True)
+            # subprocess.run(['apt-get', 'autoremove', '-y'], capture_output=True)
+            
+            bot.send_message(message.chat.id, "WireGuard успешно удален")
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            button1 = types.KeyboardButton("Мониторинг")
+            button2 = types.KeyboardButton("Администрирование")
+            markup.add(button1, button2)
+            bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
+        elif message.text == "Нет":
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            button1 = types.KeyboardButton("Мониторинг")
+            button2 = types.KeyboardButton("Администрирование")
+            markup.add(button1, button2)
+            bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
+
 @bot.message_handler(commands=['start'])
 def start(message):
     if message.chat.id in mainid:
@@ -211,8 +238,9 @@ def func(message):
                 botton_reset_up = types.KeyboardButton("Импортировать_конигурацию")
                 botton_network = types.KeyboardButton("Настроить_сеть")
                 botton_port = types.KeyboardButton("Настроить_порт")
+                botton_remove = types.KeyboardButton("Удаление_WireGuard")
                 back = types.KeyboardButton("Назад")
-                markup.add(botton22, botton_reset, botton_reset_up, botton_network, botton_port, back)
+                markup.add(botton22, botton_reset, botton_reset_up, botton_network, botton_port, botton_remove, back)
                 bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
         elif message.text == "Удалить_конфиг":
             bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить.", reply_markup=types.ReplyKeyboardRemove())
@@ -269,6 +297,13 @@ def func(message):
                 bot.send_message(message.chat.id, "Запускаю установку Wireguard. \nПожалуйста дождитесь завершения установки.")
                 subprocess.run(['scripts/start_wg.sh'])
                 bot.send_message(message.chat.id, "Установка Wireguard завершена")
+        elif message.text == "Удаление_WireGuard":
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            botton_yes = types.KeyboardButton("Да")
+            botton_no = types.KeyboardButton("Нет")
+            markup.add(botton_yes, botton_no)
+            bot.send_message(message.chat.id, text="Вы уверены, что хотите удалить WireGuard и все его конфигурации?", reply_markup=markup)
+            bot.register_next_step_handler(message, remove_wireguard)
         elif (message.text == "Да"):
             bot.send_message(message.chat.id, "Удаляю конфиги!")
             command = "rm variables.sh && rm -r /etc/wireguard/ && mkdir /etc/wireguard/ && rm cofigs.txt"
