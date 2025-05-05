@@ -13,6 +13,7 @@ config = ""
 # Создаем экземпляр бота
 bot = telebot.TeleBot(api_tg)
 
+user_data = {}  # { chat_id: {'username': str} }
 def save_config(message):
     global config
     config = message.text
@@ -131,23 +132,29 @@ def add_vpn_auto(message):
 
 # Запрос custom IP после имени
 def request_custom_ip(message):
-    # сохраняем имя для последующего использования
-    message.user_config = {
-        'username': check_message(message.text)
-    }
+
+    chat_id = message.chat.id
+    username = check_message(message.text)
+    user_data[chat_id] = {'username': username}
     bot.send_message(message.chat.id, "Введите последний октет IP (2-253):")
     bot.register_next_step_handler(message, add_vpn_custom)
 
 # Пользовательское назначение IP
 def add_vpn_custom(message):
+    chat_id = message.chat.id
+    data = user_data.get(chat_id)
+    if not data:
+        bot.send_message(chat_id, "Ошибка состояния. Начните добавление заново.")
+        return buttons(message)
     octet = message.text.strip()
-    username = message.user_config['username']
+    username = data['username']
     if not check_number_in_range(octet):
         bot.send_message(message.chat.id, "Неверный диапазон. Введите число от 2 до 253.")
         return request_custom_ip(message)
     # Передаем IP-октет в скрипт: второй аргумент
     subprocess.run(['scripts/add_cl.sh', username, octet])
     send_config_to_user(message.chat.id, username)
+    user_data.pop(chat_id, None)
     buttons(message)
 
 # Вспомогательная отправка конфига и QR
@@ -159,7 +166,9 @@ def send_config_to_user(chat_id, username):
     with open(path, 'rb') as f:
         bot.send_document(chat_id, f)
     with open(path, 'r') as f:
-        bot.send_message(chat_id, f.read())
+        content = f.read().strip()
+        if content:  
+            bot.send_message(chat_id, content)
     bot.send_message(chat_id, "Конфигурационный файл успешно отправлен.")
 
 
@@ -261,10 +270,13 @@ def func(message):
                 bot.send_message(message.chat.id, "Запускаю установку Wireguard. \nПожалуйста дождитесь завершения установки.")
                 subprocess.run(['scripts/start_wg.sh'])
                 bot.send_message(message.chat.id, "Установка Wireguard завершена")
-        elif (message.text == "Да"):
+        elif message.text == "Да":
             bot.send_message(message.chat.id, "Удаляю конфиги!")
-            command = "rm variables.sh && rm -r /etc/wireguard/ && mkdir /etc/wireguard/ && rm cofigs.txt"
-            subprocess.run(command, shell=True)
+             # Удаляем содержимое, но не сам каталог
+            subprocess.run("rm -f variables.sh && rm -rf /etc/wireguard/* && rm -f cofigs.txt", shell=True)
+            bot.send_message(message.chat.id, "Запускаю установку Wireguard")
+            subprocess.run(['scripts/start_wg.sh'])
+            bot.send_message(message.chat.id, "Установка Wireguard завершена")
 #            # Удаление файла variables.sh
 #            subprocess.run("rm variables.sh", shell=True)
 #            # Удаление каталога /etc/wireguard/
