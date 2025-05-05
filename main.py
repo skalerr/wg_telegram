@@ -126,6 +126,76 @@ def add_vpn(message):
             bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
             buttons(message)
 
+def set_vpn_network(message):
+    if message.chat.id in mainid:
+        network = message.text.strip()
+        # Validate IP network format (e.g., 10.20.20.0)
+        parts = network.split('.')
+        if len(parts) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+            # Update variables.sh
+            with open('scripts/variables.sh', 'r') as file:
+                lines = file.readlines()
+            
+            with open('scripts/variables.sh', 'w') as file:
+                for line in lines:
+                    if line.startswith('vpn_network='):
+                        file.write(f'vpn_network="{network}"\n')
+                    else:
+                        file.write(line)
+            
+            bot.send_message(message.chat.id, f"VPN network updated to {network}")
+        else:
+            bot.send_message(message.chat.id, "Invalid network format. Please use format like 10.20.20.0")
+        buttons(message)
+
+def set_vpn_port(message):
+    if message.chat.id in mainid:
+        port = message.text.strip()
+        # Validate port number
+        if port.isdigit() and 1024 <= int(port) <= 65535:
+            # Update variables.sh
+            with open('scripts/variables.sh', 'r') as file:
+                lines = file.readlines()
+            
+            with open('scripts/variables.sh', 'w') as file:
+                for line in lines:
+                    if line.startswith('vpn_port='):
+                        file.write(f'vpn_port="{port}"\n')
+                    else:
+                        file.write(line)
+            
+            bot.send_message(message.chat.id, f"VPN port updated to {port}")
+        else:
+            bot.send_message(message.chat.id, "Invalid port number. Please use a number between 1024 and 65535")
+        buttons(message)
+
+def remove_wireguard(message):
+    if message.chat.id in mainid:
+        if message.text == "Да":
+            bot.send_message(message.chat.id, "Удаляю WireGuard и все конфигурации...")
+            # Stop WireGuard service
+            subprocess.run(['wg-quick', 'down', 'wg0'], capture_output=True)
+            # Remove WireGuard directory and configurations
+            subprocess.run(['rm', '-rf', '/etc/wireguard/'], capture_output=True)
+            # Remove configuration files
+            subprocess.run(['rm', '-f', 'variables.sh', 'cofigs.txt'], capture_output=True)
+            # Remove WireGuard package
+            # subprocess.run(['apt-get', 'remove', '-y', 'wireguard'], capture_output=True)
+            # subprocess.run(['apt-get', 'autoremove', '-y'], capture_output=True)
+            
+            bot.send_message(message.chat.id, "WireGuard успешно удален")
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            button1 = types.KeyboardButton("Мониторинг")
+            button2 = types.KeyboardButton("Администрирование")
+            markup.add(button1, button2)
+            bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
+        elif message.text == "Нет":
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            button1 = types.KeyboardButton("Мониторинг")
+            button2 = types.KeyboardButton("Администрирование")
+            markup.add(button1, button2)
+            bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
+
 @bot.message_handler(commands=['start'])
 def start(message):
     if message.chat.id in mainid:
@@ -166,8 +236,11 @@ def func(message):
                 botton22 = types.KeyboardButton("Установка_Wireguard")
                 botton_reset = types.KeyboardButton("Сохранить_конигурацию")
                 botton_reset_up = types.KeyboardButton("Импортировать_конигурацию")
+                botton_network = types.KeyboardButton("Настроить_сеть")
+                botton_port = types.KeyboardButton("Настроить_порт")
+                botton_remove = types.KeyboardButton("Удаление_WireGuard")
                 back = types.KeyboardButton("Назад")
-                markup.add(botton22, botton_reset, botton_reset_up, back)
+                markup.add(botton22, botton_reset, botton_reset_up, botton_network, botton_port, botton_remove, back)
                 bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
         elif message.text == "Удалить_конфиг":
             bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить.", reply_markup=types.ReplyKeyboardRemove())
@@ -224,6 +297,13 @@ def func(message):
                 bot.send_message(message.chat.id, "Запускаю установку Wireguard. \nПожалуйста дождитесь завершения установки.")
                 subprocess.run(['scripts/start_wg.sh'])
                 bot.send_message(message.chat.id, "Установка Wireguard завершена")
+        elif message.text == "Удаление_WireGuard":
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            botton_yes = types.KeyboardButton("Да")
+            botton_no = types.KeyboardButton("Нет")
+            markup.add(botton_yes, botton_no)
+            bot.send_message(message.chat.id, text="Вы уверены, что хотите удалить WireGuard и все его конфигурации?", reply_markup=markup)
+            bot.register_next_step_handler(message, remove_wireguard)
         elif (message.text == "Да"):
             bot.send_message(message.chat.id, "Удаляю конфиги!")
             command = "rm variables.sh && rm -r /etc/wireguard/ && mkdir /etc/wireguard/ && rm cofigs.txt"
@@ -258,6 +338,12 @@ def func(message):
             button2 = types.KeyboardButton("Администрирование")
             markup.add(button1, button2)
             bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
+        elif message.text == "Настроить_сеть":
+            bot.send_message(message.chat.id, "Введите сеть VPN в формате X.X.X.0 (например, 10.20.20.0):", reply_markup=types.ReplyKeyboardRemove())
+            bot.register_next_step_handler(message, set_vpn_network)
+        elif message.text == "Настроить_порт":
+            bot.send_message(message.chat.id, "Введите порт VPN (от 1024 до 65535):", reply_markup=types.ReplyKeyboardRemove())
+            bot.register_next_step_handler(message, set_vpn_port)
         else:
             bot.send_message(message.chat.id, text="На такую комманду я не запрограммировал..")
         message_text = message.text
