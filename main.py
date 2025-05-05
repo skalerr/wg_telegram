@@ -133,7 +133,8 @@ def uninstall_wireguard(message):
     chat_id = message.chat.id
     bot.send_message(chat_id, "Удаляю WireGuard и конфигурации...")
     # Останавливаем и отключаем сервис
-    subprocess.run("systemctl stop wg-quick@wg0", shell=True)
+    # subprocess.run("wg-quick@wg0", shell=True)
+    subprocess.run("wg-quick down wg0", shell=True)
     subprocess.run("systemctl disable wg-quick@wg0", shell=True)
     # Удаляем пакеты
     subprocess.run("apt-get remove -y wireguard wireguard-tools qrencode", shell=True)
