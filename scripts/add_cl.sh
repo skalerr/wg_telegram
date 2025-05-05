@@ -2,7 +2,10 @@
 
 var_username=$1
 var_ip_address_glob2="$ip_address_glob"
-source scripts/variables.sh
+source variables.sh
+source scripts/env.sh
+
+
 ((vap_ip_local++))
 
 # Запрос имени пользователя
