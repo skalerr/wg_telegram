@@ -1,11 +1,7 @@
 #!/bin/bash
 
 ip_address=$1
-source variables.sh
-
-# Get the network prefix from vpn_network
-network_prefix=${vpn_network%.*}
-ip_address="${network_prefix}.${ip_address}"
+ip_address=10.10.0.$ip_address
 file_path="cofigs.txt"
 
 # Проверяем, передан ли IP-адрес в качестве аргумента
@@ -31,8 +27,8 @@ fi
 # Удаляем строку с указанным IP-адресом из файла
 sed -i "/$ip_address/d" "$file_path"
 
-# Удаляем файлы конфигурации пользователя
+# Удаляем файл /etc/wireguard/${username}_cl.conf
 rm -f "/etc/wireguard/${username}_cl.conf"
 rm -f "/etc/wireguard/${username}_privatekey"
 rm -f "/etc/wireguard/${username}_publickey"
-echo "Пользователь $username с IP-адресом $ip_address был удален из файла $file_path и удалены файлы конфигурации"
+echo "Пользователь $username с IP-адресом $ip_address был удален из файла $file_path и удален файл /etc/wireguard/${username}_cl.conf"

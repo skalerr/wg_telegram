@@ -13,54 +13,6 @@ config = ""
 # Создаем экземпляр бота
 bot = telebot.TeleBot(api_tg)
 
-import logging
-from typing import Optional, List, Dict, Any
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-class VPNConfig:
-    def __init__(self):
-        self.variables_file = 'scripts/variables.sh'
-        self.configs_file = 'cofigs.txt'
-        self.wireguard_dir = '/etc/wireguard'
-        self.load_variables()
-
-    def load_variables(self):
-        """Load variables from variables.sh file"""
-        try:
-            with open(self.variables_file, 'r') as file:
-                for line in file:
-                    if '=' in line:
-                        key, value = line.strip().split('=', 1)
-                        setattr(self, key.strip(), value.strip().strip('"'))
-        except FileNotFoundError:
-            logger.error(f"Variables file {self.variables_file} not found")
-            raise
-
-    def save_variable(self, key: str, value: str) -> bool:
-        """Save a variable to variables.sh file"""
-        try:
-            with open(self.variables_file, 'r') as file:
-                lines = file.readlines()
-            
-            with open(self.variables_file, 'w') as file:
-                for line in lines:
-                    if line.startswith(f'{key}='):
-                        file.write(f'{key}="{value}"\n')
-                    else:
-                        file.write(line)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving variable {key}: {str(e)}")
-            return False
-
-vpn_config = VPNConfig()
-
 def save_config(message):
     global config
     config = message.text
@@ -90,17 +42,19 @@ def qr(name_qr, chat_id):
     # Удаление QR-кода
     os.remove(img_path)
 
-def check_message(message: str) -> str:
-    """Sanitize and validate message content"""
+def check_message(message):
     valid_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_!? ')
     new_message = ''.join(c if c in valid_chars else '_' for c in message)
-    return new_message.lower().strip().replace(' ', '_')
+    new_message = new_message.replace(' ', '_')
+    return new_message.lower().strip()
 
-def check_number_in_range(number: str) -> bool:
-    """Validate if number is in valid range (2-253)"""
+def check_number_in_range(number):
     try:
         num = int(number)
-        return 2 <= num <= 253
+        if 2 <= num <= 253:
+            return True
+        else:
+            return False
     except ValueError:
         return False
 
