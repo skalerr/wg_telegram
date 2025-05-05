@@ -126,6 +126,49 @@ def add_vpn(message):
             bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
             buttons(message)
 
+def set_vpn_network(message):
+    if message.chat.id in mainid:
+        network = message.text.strip()
+        # Validate IP network format (e.g., 10.20.20.0)
+        parts = network.split('.')
+        if len(parts) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+            # Update variables.sh
+            with open('scripts/variables.sh', 'r') as file:
+                lines = file.readlines()
+            
+            with open('scripts/variables.sh', 'w') as file:
+                for line in lines:
+                    if line.startswith('vpn_network='):
+                        file.write(f'vpn_network="{network}"\n')
+                    else:
+                        file.write(line)
+            
+            bot.send_message(message.chat.id, f"VPN network updated to {network}")
+        else:
+            bot.send_message(message.chat.id, "Invalid network format. Please use format like 10.20.20.0")
+        buttons(message)
+
+def set_vpn_port(message):
+    if message.chat.id in mainid:
+        port = message.text.strip()
+        # Validate port number
+        if port.isdigit() and 1024 <= int(port) <= 65535:
+            # Update variables.sh
+            with open('scripts/variables.sh', 'r') as file:
+                lines = file.readlines()
+            
+            with open('scripts/variables.sh', 'w') as file:
+                for line in lines:
+                    if line.startswith('vpn_port='):
+                        file.write(f'vpn_port="{port}"\n')
+                    else:
+                        file.write(line)
+            
+            bot.send_message(message.chat.id, f"VPN port updated to {port}")
+        else:
+            bot.send_message(message.chat.id, "Invalid port number. Please use a number between 1024 and 65535")
+        buttons(message)
+
 @bot.message_handler(commands=['start'])
 def start(message):
     if message.chat.id in mainid:
@@ -166,8 +209,10 @@ def func(message):
                 botton22 = types.KeyboardButton("Установка_Wireguard")
                 botton_reset = types.KeyboardButton("Сохранить_конигурацию")
                 botton_reset_up = types.KeyboardButton("Импортировать_конигурацию")
+                botton_network = types.KeyboardButton("Настроить_сеть")
+                botton_port = types.KeyboardButton("Настроить_порт")
                 back = types.KeyboardButton("Назад")
-                markup.add(botton22, botton_reset, botton_reset_up, back)
+                markup.add(botton22, botton_reset, botton_reset_up, botton_network, botton_port, back)
                 bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
         elif message.text == "Удалить_конфиг":
             bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить.", reply_markup=types.ReplyKeyboardRemove())
@@ -258,6 +303,12 @@ def func(message):
             button2 = types.KeyboardButton("Администрирование")
             markup.add(button1, button2)
             bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
+        elif message.text == "Настроить_сеть":
+            bot.send_message(message.chat.id, "Введите сеть VPN в формате X.X.X.0 (например, 10.20.20.0):", reply_markup=types.ReplyKeyboardRemove())
+            bot.register_next_step_handler(message, set_vpn_network)
+        elif message.text == "Настроить_порт":
+            bot.send_message(message.chat.id, "Введите порт VPN (от 1024 до 65535):", reply_markup=types.ReplyKeyboardRemove())
+            bot.register_next_step_handler(message, set_vpn_port)
         else:
             bot.send_message(message.chat.id, text="На такую комманду я не запрограммировал..")
         message_text = message.text
