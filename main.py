@@ -2383,18 +2383,44 @@ class WireGuardBot:
                 available_octets = set(range(2, 254)) - used_octets
                 stats_msg += f"• Свободных IP: {len(available_octets)}\n"
                 
-                # Recent configs
-                stats_msg += f"\n🗓 **Последние клиенты:**\n"
-                sorted_configs = sorted(
-                    configs.items(), 
-                    key=lambda x: x[1]['file'].stat().st_mtime, 
-                    reverse=True
-                )[:5]
-                
-                for client_name, config_info in sorted_configs:
-                    mod_time = datetime.fromtimestamp(config_info['file'].stat().st_mtime)
-                    escaped_name = self.escape_markdown(client_name)
-                    stats_msg += f"• **{escaped_name}** ({config_info['ip']}) - {mod_time.strftime('%d.%m.%Y %H:%M')}\n"
+                # Active clients from wg show
+                active_peers = self.get_active_peers()
+                if active_peers:
+                    stats_msg += f"\n🟢 **Активные клиенты:**\n"
+                    
+                    # Match IPs to client names
+                    ip_to_name = {}
+                    for name, config in configs.items():
+                        ip_to_name[config['ip']] = name
+                    
+                    # Sort by handshake time (most recent first)
+                    sorted_peers = []
+                    for peer_key, peer_info in active_peers.items():
+                        if 'ip' in peer_info and 'handshake' in peer_info:
+                            client_name = ip_to_name.get(peer_info['ip'], f"Unknown_{peer_info['ip'].split('.')[-1]}")
+                            sorted_peers.append((client_name, peer_info))
+                    
+                    # Show up to 5 most recent active clients
+                    for client_name, peer_info in sorted_peers[:5]:
+                        escaped_name = self.escape_markdown(client_name)
+                        handshake = peer_info.get('handshake', 'never')
+                        transfer = peer_info.get('transfer', 'no data')
+                        stats_msg += f"• **{escaped_name}** ({peer_info['ip']}) - {handshake}\n"
+                        if transfer != 'no data':
+                            stats_msg += f"  📊 {transfer}\n"
+                else:
+                    # Fallback to recent configs if no active peers
+                    stats_msg += f"\n🗓 **Последние клиенты:**\n"
+                    sorted_configs = sorted(
+                        configs.items(), 
+                        key=lambda x: x[1]['file'].stat().st_mtime, 
+                        reverse=True
+                    )[:5]
+                    
+                    for client_name, config_info in sorted_configs:
+                        mod_time = datetime.fromtimestamp(config_info['file'].stat().st_mtime)
+                        escaped_name = self.escape_markdown(client_name)
+                        stats_msg += f"• **{escaped_name}** ({config_info['ip']}) - {mod_time.strftime('%d.%m.%Y %H:%M')}\n"
             else:
                 stats_msg += "• Клиентские конфигурации не найдены\n"
             
@@ -2439,6 +2465,37 @@ class WireGuardBot:
         except Exception as e:
             logger.error(f"Error getting server status: {e}")
             return {'status': '❓ Неизвестно'}
+    
+    def get_active_peers(self) -> dict:
+        """Get active WireGuard peers from wg show"""
+        try:
+            wg_result = subprocess.run(['wg', 'show'], capture_output=True, text=True)
+            if wg_result.returncode != 0:
+                return {}
+            
+            active_peers = {}
+            current_peer = None
+            
+            for line in wg_result.stdout.split('\n'):
+                line = line.strip()
+                if line.startswith('peer:'):
+                    current_peer = line.split('peer: ')[1]
+                    active_peers[current_peer] = {}
+                elif current_peer and ':' in line:
+                    if line.startswith('allowed ips:'):
+                        ip = line.split('allowed ips: ')[1].split('/')[0]
+                        active_peers[current_peer]['ip'] = ip
+                    elif line.startswith('latest handshake:'):
+                        handshake = line.split('latest handshake: ')[1]
+                        active_peers[current_peer]['handshake'] = handshake
+                    elif line.startswith('transfer:'):
+                        transfer = line.split('transfer: ')[1]
+                        active_peers[current_peer]['transfer'] = transfer
+            
+            return active_peers
+        except Exception as e:
+            logger.error(f"Error getting active peers: {e}")
+            return {}
     
     def get_system_info(self) -> str:
         """Get basic system information"""
