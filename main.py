@@ -70,6 +70,10 @@ def buttons(message):
     bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
 
 def del_vpn(message):
+    if message.chat.id not in mainid:
+        bot.send_message(message.chat.id, "У вас нет прав для выполнения этой команды.")
+        return
+        
     if message.sticker is not None:
         # Если пользователь отправил стикер вместо текста
         bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не стикер.')
@@ -82,18 +86,24 @@ def del_vpn(message):
         buttons(message)
     else:
         # Обработка текстового сообщения
-        bot.reply_to(message, 'Вы отправили текстовое сообщение.')
         config_string = check_message(message.text)
         if check_number_in_range(message.text):
-            subprocess.run(['scripts/del_cl.sh', config_string])
-            script_path = os.path.dirname(os.path.realpath(__file__))
-            rm_user_script = os.path.join(script_path, "rm_user.sh")
-            subprocess.run([rm_user_script, config_string])
-            bot.send_message(message.chat.id, f"IP-адрес {wg_local_ip_hint}.{config_string} успешно удален.")
-            print(f"{message.text} находится в допустимом диапазоне.")
+            try:
+                result = subprocess.run(['scripts/del_cl.sh', message.text], capture_output=True, text=True)
+                if result.returncode == 0:
+                    script_path = os.path.dirname(os.path.realpath(__file__))
+                    rm_user_script = os.path.join(script_path, "rm_user.sh")
+                    if os.path.exists(rm_user_script):
+                        subprocess.run([rm_user_script, message.text])
+                    bot.send_message(message.chat.id, f"IP-адрес {wg_local_ip_hint}.{message.text} успешно удален.")
+                    print(f"{message.text} находится в допустимом диапазоне.")
+                else:
+                    bot.send_message(message.chat.id, f"Ошибка при удалении IP-адреса {wg_local_ip_hint}.{message.text}: {result.stderr}")
+            except Exception as e:
+                bot.send_message(message.chat.id, f"Произошла ошибка при удалении конфига: {str(e)}")
         else:
             print(f"{message.text} не находится в допустимом диапазоне.")
-            bot.send_message(message.chat.id, f"IP-адрес {wg_local_ip_hint}.{config_string} не может быть удален. Ввведите число от 2 до 253")
+            bot.send_message(message.chat.id, f"IP-адрес {wg_local_ip_hint}.{message.text} не может быть удален. Введите число от 2 до 253")
     buttons(message)
 
 
@@ -211,11 +221,14 @@ def func(message):
                 bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
         elif message.text == "Удалить_конфиг":
             bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить.", reply_markup=types.ReplyKeyboardRemove())
-            config_file_path_txt = f"cofigs.txt"
-            with open(config_file_path_txt, 'rb') as file:
-                config_content = file.read()
-            bot.send_message(message.chat.id, config_content)
-            bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить. Например если нужно удалить ip адресс {wg_local_ip_hint}.47, то введите 47")
+            config_file_path_txt = f"configs.txt"
+            try:
+                with open(config_file_path_txt, 'r') as file:
+                    config_content = file.read()
+                bot.send_message(message.chat.id, config_content)
+            except FileNotFoundError:
+                bot.send_message(message.chat.id, "Файл configs.txt не найден")
+            bot.send_message(message.chat.id, f"Введите последний октет ip, который нужно удалить. Например если нужно удалить ip адрес {wg_local_ip_hint}.47, то введите 47")
             bot.register_next_step_handler(message, del_vpn)
         elif message.text == "Добавить_конфиг":
             bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
@@ -226,7 +239,7 @@ def func(message):
                 botton_no = types.KeyboardButton("Нет")
                 markup.add(botton_yes, botton_no)
                 bot.send_message(message.chat.id, text="Wireguard будет удален навсегда со всеми настройками. \nХотите продолжить?", reply_markup=markup)
-        elif (message.text == "ДА УДАЛИТЬ НАВСЕГДА"):
+        elif (message.text == "Да удалить НАВСЕГДА"):
             uninstall_wireguard(message)
 
         elif message.text == "Конфиги":
@@ -242,10 +255,13 @@ def func(message):
                 if os.path.basename(file_path) != 'wg0.conf':
                     with open(file_path, 'rb') as file:
                         bot.send_document(message.chat.id, document=file)
-            config_file_path_txt = f"cofigs.txt"
-            with open(config_file_path_txt, 'rb') as file:
-                config_content = file.read()
-            bot.send_message(message.chat.id, config_content)
+            config_file_path_txt = f"configs.txt"
+            try:
+                with open(config_file_path_txt, 'r') as file:
+                    config_content = file.read()
+                bot.send_message(message.chat.id, config_content)
+            except FileNotFoundError:
+                bot.send_message(message.chat.id, "Файл configs.txt не найден")
 #            bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
         elif message.text == "Сохранить_конигурацию":
             subprocess.run(['scripts/backup.sh'])
@@ -283,7 +299,7 @@ def func(message):
                 bot.send_message(message.chat.id, "Установка Wireguard завершена")
         elif (message.text == "Да"):
             bot.send_message(message.chat.id, "Удаляю конфиги!")
-            command = "rm variables.sh && rm -r /etc/wireguard/ && mkdir /etc/wireguard/ && rm cofigs.txt"
+            command = "rm -f variables.sh && rm -rf /etc/wireguard/ && mkdir /etc/wireguard/ && rm -f configs.txt"
             subprocess.run(command, shell=True)
 #            # Удаление файла variables.sh
 #            subprocess.run("rm variables.sh", shell=True)
@@ -316,7 +332,7 @@ def func(message):
             markup.add(button1, button2)
             bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
         else:
-            bot.send_message(message.chat.id, text="На такую комманду я не запрограммировал..")
+            bot.send_message(message.chat.id, text="На такую команду я не запрограммировал..")
         message_text = message.text
         print(message_text)
     elif(str(message.chat.id) != mainid):
