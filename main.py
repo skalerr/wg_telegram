@@ -33,6 +33,7 @@ class WireGuardBot:
         self.bot.message_handler(commands=['id'])(self.id_command)
         self.bot.message_handler(content_types=['text'])(self.handle_text)
         self.bot.message_handler(content_types=['sticker'])(self.handle_sticker)
+        self.bot.callback_query_handler(func=lambda call: True)(self.handle_callback)
     
     def is_authorized(self, chat_id: int) -> bool:
         return chat_id in self.authorized_users
@@ -177,7 +178,8 @@ class WireGuardBot:
 
 
 
-    def add_vpn_config(self, message):
+    def get_config_name(self, message):
+        """First step: get config name"""
         if not self.is_authorized(message.chat.id):
             self.send_unauthorized_message(message)
             return
@@ -193,48 +195,112 @@ class WireGuardBot:
                 self.show_monitoring_menu(message)
                 return
             
-            # Execute add client script
+            # Store config name and ask for IP
+            self.temp_config_name = config_name
+            self.show_ip_selection(message)
+            
+        except Exception as e:
+            logger.error(f"Error getting config name: {e}")
+            self.bot.send_message(message.chat.id, "Произошла ошибка")
+            self.show_monitoring_menu(message)
+
+    def show_ip_selection(self, message):
+        """Show available IP addresses for selection"""
+        try:
+            # Get available IPs
+            available_ips = self.get_available_ips()
+            
+            if not available_ips:
+                self.bot.send_message(message.chat.id, "Нет доступных IP адресов")
+                self.show_monitoring_menu(message)
+                return
+            
+            # Create inline keyboard with available IPs
+            markup = types.InlineKeyboardMarkup(row_width=3)
+            buttons = []
+            
+            for ip_octet in available_ips[:15]:  # Show first 15 available IPs
+                ip_addr = f"10.20.20.{ip_octet}"
+                button = types.InlineKeyboardButton(
+                    text=ip_addr, 
+                    callback_data=f"select_ip:{ip_octet}"
+                )
+                buttons.append(button)
+            
+            # Add buttons in rows of 3
+            for i in range(0, len(buttons), 3):
+                markup.row(*buttons[i:i+3])
+            
+            # Add auto-select button
+            auto_button = types.InlineKeyboardButton(
+                text="🔄 Автовыбор", 
+                callback_data="select_ip:auto"
+            )
+            markup.row(auto_button)
+            
+            self.bot.send_message(
+                message.chat.id, 
+                f"Выберите IP адрес для конфига **{self.temp_config_name}**:\n\n"
+                f"Доступно IP адресов: {len(available_ips)}",
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error showing IP selection: {e}")
+            self.bot.send_message(message.chat.id, "Ошибка при получении доступных IP")
+            self.show_monitoring_menu(message)
+
+    def get_available_ips(self):
+        """Get list of available IP octets (2-254)"""
+        try:
+            # Get existing configurations
+            configs = self.scan_existing_configs()
+            used_octets = set()
+            
+            for config_info in configs.values():
+                octet = int(config_info['octet'])
+                used_octets.add(octet)
+            
+            # Return available octets (2-254, excluding 1 for server)
+            all_octets = set(range(2, 255))
+            available_octets = sorted(list(all_octets - used_octets))
+            
+            return available_octets
+            
+        except Exception as e:
+            logger.error(f"Error getting available IPs: {e}")
+            return []
+
+    def add_vpn_config(self, config_name, selected_ip=None):
+        """Create VPN config with specified name and IP"""
+        try:
+            # Determine IP to use
+            if selected_ip == "auto" or selected_ip is None:
+                # Auto-select first available IP
+                available_ips = self.get_available_ips()
+                if not available_ips:
+                    return False, "Нет доступных IP адресов"
+                ip_octet = available_ips[0]
+            else:
+                ip_octet = int(selected_ip)
+            
+            # Execute add client script with IP parameter
             result = subprocess.run(
-                ['scripts/add_cl.sh', config_name], 
+                ['scripts/add_cl.sh', config_name, str(ip_octet)], 
                 capture_output=True, 
                 text=True
             )
             
             if result.returncode != 0:
                 logger.error(f"Failed to create VPN config: {result.stderr}")
-                self.bot.send_message(message.chat.id, "Ошибка при создании конфигурации")
-                self.show_monitoring_menu(message)
-                return
+                return False, f"Ошибка при создании конфигурации: {result.stderr}"
             
-            self.bot.send_message(message.chat.id, f"Конфиг {config_name}.conf создан")
-            
-            config_file_path = Path(f"/etc/wireguard/{config_name}_cl.conf")
-            if not config_file_path.exists():
-                logger.error(f"Config file not found: {config_file_path}")
-                self.bot.send_message(message.chat.id, "Файл конфигурации не найден")
-                self.show_monitoring_menu(message)
-                return
-            
-            # Generate and send QR code
-            if self.generate_qr_code(str(config_file_path), message.chat.id):
-                logger.info(f"QR code sent for config {config_name}")
-            
-            # Send config file
-            with open(config_file_path, 'rb') as file:
-                self.bot.send_document(message.chat.id, file)
-            
-            with open(config_file_path, 'r', encoding='utf-8') as file:
-                config_content = file.read()
-            
-            self.bot.send_message(message.chat.id, config_content)
-            self.bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
-            logger.info(f"Created and sent VPN config: {config_name}")
+            return True, f"✅ Конфиг **{config_name}.conf** создан с IP 10.20.20.{ip_octet}"
             
         except Exception as e:
             logger.error(f"Error creating VPN config: {e}")
-            self.bot.send_message(message.chat.id, "Произошла ошибка при создании конфигурации")
-        
-        self.show_monitoring_menu(message)
+            return False, f"Произошла ошибка: {str(e)}"
 
     def uninstall_wireguard(self, message):
         try:
@@ -280,6 +346,60 @@ class WireGuardBot:
     def handle_sticker(self, message):
         self.bot.reply_to(message, 'Вы отправили стикер!')
 
+    def handle_callback(self, call):
+        """Handle inline keyboard callbacks"""
+        if not self.is_authorized(call.from_user.id):
+            self.bot.answer_callback_query(call.id, "Unauthorized")
+            return
+        
+        try:
+            if call.data.startswith("select_ip:"):
+                selected_ip = call.data.split(":")[1]
+                
+                # Create config with selected IP
+                config_name = getattr(self, 'temp_config_name', None)
+                if not config_name:
+                    self.bot.answer_callback_query(call.id, "Ошибка: имя конфига не найдено")
+                    return
+                
+                success, message_text = self.add_vpn_config(config_name, selected_ip)
+                
+                # Edit the message to remove inline keyboard
+                self.bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=f"Создание конфига **{config_name}**...",
+                    parse_mode='Markdown'
+                )
+                
+                # Send result
+                if success:
+                    self.bot.send_message(call.message.chat.id, message_text, parse_mode='Markdown')
+                    
+                    # Try to send the config file
+                    try:
+                        config_file_path = Path(f"/etc/wireguard/{config_name}_cl.conf")
+                        if config_file_path.exists():
+                            with open(config_file_path, 'rb') as file:
+                                self.bot.send_document(
+                                    call.message.chat.id, 
+                                    file, 
+                                    caption=f"📄 Конфигурация {config_name}"
+                                )
+                        else:
+                            logger.error(f"Config file not found: {config_file_path}")
+                    except Exception as e:
+                        logger.error(f"Error sending config file: {e}")
+                else:
+                    self.bot.send_message(call.message.chat.id, f"❌ {message_text}")
+                
+                self.show_monitoring_menu(call.message)
+                self.bot.answer_callback_query(call.id)
+                
+        except Exception as e:
+            logger.error(f"Error handling callback: {e}")
+            self.bot.answer_callback_query(call.id, "Произошла ошибка")
+
     def id_command(self, message):
         user_info = f"Id: {message.chat.id}\nusername: {message.from_user.username}"
         self.bot.send_message(message.chat.id, text=user_info)
@@ -304,7 +424,7 @@ class WireGuardBot:
             self.prompt_delete_config(message)
         elif text == "Добавить_конфиг":
             self.bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
-            self.bot.register_next_step_handler(message, self.add_vpn_config)
+            self.bot.register_next_step_handler(message, self.get_config_name)
         elif text == "Полное_удаление":
             self.confirm_uninstall(message)
         elif text == "Да удалить НАВСЕГДА":
@@ -397,7 +517,8 @@ class WireGuardBot:
                 
                 sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
                 for client_name, config_info in sorted_configs:
-                    summary_msg += f"👤 **{client_name}** - {config_info['ip']}\n"
+                    escaped_name = client_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]')
+                    summary_msg += f"👤 **{escaped_name}** - {config_info['ip']}\n"
                 
                 self.bot.send_message(message.chat.id, summary_msg, parse_mode='Markdown')
             

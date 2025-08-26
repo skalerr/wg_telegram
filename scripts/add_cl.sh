@@ -1,12 +1,27 @@
 #!/bin/bash
 
 var_username=$1
+specified_ip=$2
 var_ip_address_glob2="$ip_address_glob"
 source variables.sh
 source scripts/env.sh
 
-
-((vap_ip_local++))
+# Use specified IP if provided, otherwise find next available
+if [ -n "$specified_ip" ]; then
+    # Check if specified IP is already in use
+    if grep -q "AllowedIPs = $wg_local_ip_hint.${specified_ip}/32" /etc/wireguard/wg0.conf; then
+        echo "Error: IP $wg_local_ip_hint.${specified_ip} is already in use"
+        exit 1
+    fi
+    vap_ip_local=$specified_ip
+else
+    # Find next available IP (starting from 2, since 1 is server)
+    next_ip=2
+    while grep -q "AllowedIPs = $wg_local_ip_hint.${next_ip}/32" /etc/wireguard/wg0.conf; do
+        ((next_ip++))
+    done
+    vap_ip_local=$next_ip
+fi
 
 # Запрос имени пользователя
 #read -p "Введите имя пользователя: " var_username
