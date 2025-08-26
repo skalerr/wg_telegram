@@ -117,13 +117,15 @@ class WireGuardBot:
         add_btn = types.KeyboardButton("Добавить_конфиг")
         bulk_add_btn = types.KeyboardButton("Массовое_создание")
         delete_btn = types.KeyboardButton("Удалить_конфиг")
+        bulk_delete_btn = types.KeyboardButton("Массовое_удаление")
         recreate_btn = types.KeyboardButton("Пересоздать_конфиги")
         back_btn = types.KeyboardButton("Назад")
         
         markup.add(stats_btn, monitor_btn)
         markup.add(configs_btn)
         markup.add(add_btn, bulk_add_btn)
-        markup.add(delete_btn, recreate_btn)
+        markup.add(delete_btn, bulk_delete_btn)
+        markup.add(recreate_btn)
         markup.add(back_btn)
         self.bot.send_message(message.chat.id, text="📊 Мониторинг VPN сервера", reply_markup=markup)
 
@@ -498,7 +500,6 @@ class WireGuardBot:
                 "client3\n"
                 "```\n\n"
                 "⚠️ **Ограничения:**\n"
-                "• Максимум 50 клиентов за раз\n"
                 "• Имена только латинские буквы, цифры, дефисы, подчеркивания\n"
                 "• IP октеты от 2 до 254\n\n"
                 "Отправьте список клиентов:"
@@ -537,10 +538,6 @@ class WireGuardBot:
                 self.show_monitoring_menu(message)
                 return
             
-            if len(client_list) > 50:
-                self.bot.send_message(message.chat.id, "❌ Слишком много клиентов. Максимум 50 за раз.")
-                self.show_monitoring_menu(message)
-                return
             
             # Validate clients
             validation_result = self.validate_bulk_clients(client_list)
@@ -900,6 +897,403 @@ class WireGuardBot:
             logger.error(f"Error creating configs archive: {e}")
             self.bot.send_message(message.chat.id, "⚠️ Не удалось создать архив конфигураций")
 
+    def start_bulk_deletion(self, message):
+        """Start bulk client deletion process"""
+        try:
+            # Get current configurations
+            configs = self.scan_existing_configs()
+            
+            if not configs:
+                self.bot.send_message(
+                    message.chat.id,
+                    "❌ Нет клиентов для удаления",
+                    reply_markup=types.ReplyKeyboardRemove()
+                )
+                self.show_monitoring_menu(message)
+                return
+            
+            help_text = (
+                "🗑️ **Массовое удаление клиентов**\n\n"
+                "Отправьте список клиентов для удаления в одном из форматов:\n\n"
+                "**Формат 1 - По именам:**\n"
+                "```\n"
+                "client1\n"
+                "client2\n"
+                "client3\n"
+                "```\n\n"
+                "**Формат 2 - По IP октетам:**\n"
+                "```\n"
+                "5\n"
+                "10\n"
+                "15\n"
+                "```\n\n"
+                "**Формат 3 - Смешанный:**\n"
+                "```\n"
+                "client1\n"
+                "10\n"
+                "client3\n"
+                "```\n\n"
+                "**Специальные команды:**\n"
+                "• `*` или `all` - удалить ВСЕХ клиентов\n"
+                "• `#комментарий` - строки игнорируются\n\n"
+                f"**Текущие клиенты ({len(configs)}):**\n"
+            )
+            
+            # Add current clients list (first 15)
+            sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
+            for i, (client_name, config_info) in enumerate(sorted_configs[:15]):
+                escaped_name = self.escape_markdown(client_name)
+                help_text += f"• **{escaped_name}** - {config_info['ip']} (октет: {config_info['octet']})\n"
+            
+            if len(configs) > 15:
+                help_text += f"... и ещё {len(configs) - 15} клиентов\n"
+            
+            help_text += "\n⚠️ **ВНИМАНИЕ: Удаление необратимо!**\n\nОтправьте список для удаления:"
+            
+            self.bot.send_message(
+                message.chat.id,
+                help_text,
+                reply_markup=types.ReplyKeyboardRemove(),
+                parse_mode='Markdown'
+            )
+            
+            self.bot.register_next_step_handler(message, self.handle_bulk_deletion)
+            
+        except Exception as e:
+            logger.error(f"Error starting bulk deletion: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при запуске массового удаления")
+            self.show_monitoring_menu(message)
+
+    def handle_bulk_deletion(self, message):
+        """Handle bulk client deletion"""
+        if not self.is_authorized(message.chat.id):
+            self.send_unauthorized_message(message)
+            return
+        
+        if not self.validate_message_type(message):
+            self.show_monitoring_menu(message)
+            return
+        
+        try:
+            # Parse deletion list
+            deletion_list = self.parse_deletion_list(message.text)
+            
+            if not deletion_list:
+                self.bot.send_message(message.chat.id, "❌ Не удалось распознать список для удаления")
+                self.show_monitoring_menu(message)
+                return
+            
+            # Validate deletion list
+            validation_result = self.validate_bulk_deletion(deletion_list)
+            if not validation_result["valid"]:
+                error_msg = f"❌ Ошибки в списке для удаления:\n{validation_result['errors']}"
+                self.bot.send_message(message.chat.id, error_msg)
+                self.show_monitoring_menu(message)
+                return
+            
+            # Show confirmation
+            self.show_bulk_deletion_confirmation(message, deletion_list, validation_result["clients_to_delete"])
+            
+        except Exception as e:
+            logger.error(f"Error handling bulk deletion: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при обработке списка")
+            self.show_monitoring_menu(message)
+
+    def parse_deletion_list(self, text):
+        """Parse deletion list from text"""
+        try:
+            items = []
+            lines = text.strip().split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#'):  # Skip empty lines and comments
+                    continue
+                
+                # Check for special commands
+                if line.lower() in ['*', 'all', 'все']:
+                    items.append({"type": "all"})
+                elif line.isdigit():
+                    # IP octet
+                    octet = int(line)
+                    if 2 <= octet <= 254:
+                        items.append({"type": "ip", "value": octet})
+                else:
+                    # Client name
+                    items.append({"type": "name", "value": line})
+            
+            return items
+            
+        except Exception as e:
+            logger.error(f"Error parsing deletion list: {e}")
+            return []
+
+    def validate_bulk_deletion(self, deletion_list):
+        """Validate bulk deletion list"""
+        try:
+            errors = []
+            clients_to_delete = {}
+            
+            # Get existing configurations
+            existing_configs = self.scan_existing_configs()
+            
+            if not existing_configs:
+                return {"valid": False, "errors": "Нет клиентов для удаления"}
+            
+            for i, item in enumerate(deletion_list, 1):
+                if item["type"] == "all":
+                    # Delete all clients
+                    clients_to_delete.update(existing_configs)
+                    continue
+                elif item["type"] == "ip":
+                    # Find client by IP octet
+                    octet = item["value"]
+                    found = False
+                    for name, config in existing_configs.items():
+                        if int(config['octet']) == octet:
+                            clients_to_delete[name] = config
+                            found = True
+                            break
+                    
+                    if not found:
+                        errors.append(f"Строка {i}: IP октет {octet} не найден")
+                        
+                elif item["type"] == "name":
+                    # Find client by name
+                    name = item["value"]
+                    if name in existing_configs:
+                        clients_to_delete[name] = existing_configs[name]
+                    else:
+                        errors.append(f"Строка {i}: клиент '{name}' не найден")
+            
+            if not clients_to_delete and not errors:
+                errors.append("Не найдено клиентов для удаления")
+            
+            return {
+                "valid": len(errors) == 0,
+                "errors": "\n".join(errors),
+                "clients_to_delete": clients_to_delete
+            }
+            
+        except Exception as e:
+            logger.error(f"Error validating bulk deletion: {e}")
+            return {"valid": False, "errors": "Ошибка при валидации списка"}
+
+    def show_bulk_deletion_confirmation(self, message, deletion_list, clients_to_delete):
+        """Show bulk deletion confirmation"""
+        try:
+            delete_count = len(clients_to_delete)
+            
+            # Create preview
+            preview_lines = []
+            for i, (client_name, config_info) in enumerate(sorted(clients_to_delete.items(), key=lambda x: int(x[1]['octet']))[:10]):
+                preview_lines.append(f"• **{self.escape_markdown(client_name)}** - {config_info['ip']}")
+            
+            if len(clients_to_delete) > 10:
+                preview_lines.append(f"... и ещё {len(clients_to_delete) - 10} клиентов")
+            
+            # Determine danger level
+            if delete_count >= 10:
+                danger_emoji = "⚠️"
+                danger_text = "МАССОВОЕ УДАЛЕНИЕ"
+            elif delete_count >= 5:
+                danger_emoji = "🔶"
+                danger_text = "Множественное удаление"
+            else:
+                danger_emoji = "🗑️"
+                danger_text = "Удаление клиентов"
+            
+            confirmation_msg = (
+                f"{danger_emoji} **{danger_text}**\n\n"
+                f"🗂️ **Клиентов к удалению:** {delete_count}\n\n"
+                f"**Будут удалены:**\n" + "\n".join(preview_lines) + "\n\n"
+                f"⏱️ **Примерное время:** {delete_count * 2} сек.\n\n"
+                f"🚨 **ВНИМАНИЕ: Это действие необратимо!**\n"
+                f"Все файлы конфигураций и ключи будут удалены навсегда.\n\n"
+                f"Продолжить удаление?"
+            )
+            
+            # Create inline keyboard
+            markup = types.InlineKeyboardMarkup()
+            if delete_count >= 10:
+                confirm_text = f"💥 УДАЛИТЬ ВСЕ {delete_count}"
+            else:
+                confirm_text = f"🗑️ Удалить {delete_count}"
+                
+            confirm_btn = types.InlineKeyboardButton(
+                confirm_text, 
+                callback_data="bulk_delete_confirm"
+            )
+            cancel_btn = types.InlineKeyboardButton(
+                "❌ Отменить", 
+                callback_data="bulk_delete_cancel"
+            )
+            markup.row(confirm_btn)
+            markup.row(cancel_btn)
+            
+            # Store deletion list temporarily
+            self.temp_bulk_deletion = clients_to_delete
+            
+            self.bot.send_message(
+                message.chat.id,
+                confirmation_msg,
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error showing bulk deletion confirmation: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при подготовке удаления")
+            self.show_monitoring_menu(message)
+
+    def perform_bulk_deletion(self, message, clients_to_delete):
+        """Actually perform bulk client deletion"""
+        try:
+            # Edit message to show progress
+            self.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                text="⏳ **Массовое удаление клиентов...**\n\nПожалуйста, подождите.",
+                parse_mode='Markdown'
+            )
+            
+            results = {
+                "deleted": [],
+                "failed": [],
+                "total": len(clients_to_delete)
+            }
+            
+            # Progress tracking
+            progress_msg_id = None
+            
+            for i, (client_name, config_info) in enumerate(clients_to_delete.items(), 1):
+                try:
+                    # Update progress every 3 clients or on last client
+                    if i % 3 == 0 or i == len(clients_to_delete):
+                        progress_text = (
+                            f"⏳ **Удаление клиентов...**\n\n"
+                            f"📊 Прогресс: {i}/{len(clients_to_delete)}\n"
+                            f"✅ Удалено: {len(results['deleted'])}\n"
+                            f"❌ Ошибок: {len(results['failed'])}\n\n"
+                            f"Текущий клиент: **{self.escape_markdown(client_name)}**"
+                        )
+                        
+                        if progress_msg_id:
+                            try:
+                                self.bot.edit_message_text(
+                                    chat_id=message.chat.id,
+                                    message_id=progress_msg_id,
+                                    text=progress_text,
+                                    parse_mode='Markdown'
+                                )
+                            except:
+                                pass
+                        else:
+                            progress_msg = self.bot.send_message(
+                                message.chat.id,
+                                progress_text,
+                                parse_mode='Markdown'
+                            )
+                            progress_msg_id = progress_msg.message_id
+                    
+                    # Delete client
+                    ip_octet = int(config_info['octet'])
+                    success, result_msg = self.perform_client_deletion(client_name, ip_octet, message.chat.id)
+                    
+                    if success:
+                        results["deleted"].append({
+                            "name": client_name,
+                            "ip": config_info['ip']
+                        })
+                        logger.info(f"Bulk deletion: {client_name} deleted successfully")
+                    else:
+                        results["failed"].append({
+                            "name": client_name,
+                            "error": result_msg
+                        })
+                        logger.error(f"Bulk deletion: {client_name} failed - {result_msg}")
+                    
+                    # Small delay to prevent overwhelming
+                    import time
+                    time.sleep(0.3)
+                    
+                except Exception as e:
+                    results["failed"].append({
+                        "name": client_name,
+                        "error": str(e)
+                    })
+                    logger.error(f"Error deleting client {client_name}: {e}")
+            
+            # Send final results
+            self.send_bulk_deletion_results(message, results)
+            
+            # Clean up temp data
+            if hasattr(self, 'temp_bulk_deletion'):
+                delattr(self, 'temp_bulk_deletion')
+            
+        except Exception as e:
+            logger.error(f"Error performing bulk deletion: {e}")
+            self.bot.send_message(
+                message.chat.id,
+                f"❌ **Критическая ошибка при массовом удалении:**\n{str(e)[:200]}",
+                parse_mode='Markdown'
+            )
+            self.show_monitoring_menu(message)
+
+    def send_bulk_deletion_results(self, message, results):
+        """Send bulk deletion results"""
+        try:
+            deleted_count = len(results["deleted"])
+            failed_count = len(results["failed"])
+            total_count = results["total"]
+            
+            # Create results summary
+            if deleted_count == total_count:
+                status_emoji = "✅"
+                status_text = "Все клиенты удалены успешно!"
+            elif deleted_count > 0:
+                status_emoji = "⚠️"
+                status_text = "Удаление завершено с ошибками"
+            else:
+                status_emoji = "❌"
+                status_text = "Не удалось удалить ни одного клиента"
+            
+            summary_msg = (
+                f"{status_emoji} **{status_text}**\n\n"
+                f"📊 **Статистика:**\n"
+                f"🗑️ Удалено: {deleted_count}/{total_count}\n"
+                f"❌ Ошибок: {failed_count}\n"
+            )
+            
+            # Add deleted clients list
+            if results["deleted"]:
+                summary_msg += f"\n🟢 **Удаленные клиенты:**\n"
+                for client in results["deleted"][:10]:  # Show first 10
+                    summary_msg += f"• **{self.escape_markdown(client['name'])}** ({client['ip']})\n"
+                
+                if len(results["deleted"]) > 10:
+                    summary_msg += f"... и ещё {len(results['deleted']) - 10} клиентов\n"
+            
+            # Add failed clients list
+            if results["failed"]:
+                summary_msg += f"\n🔴 **Ошибки:**\n"
+                for client in results["failed"][:5]:  # Show first 5 errors
+                    error_short = client["error"][:50] + "..." if len(client["error"]) > 50 else client["error"]
+                    summary_msg += f"• **{self.escape_markdown(client['name'])}**: {error_short}\n"
+                
+                if len(results["failed"]) > 5:
+                    summary_msg += f"... и ещё {len(results['failed']) - 5} ошибок\n"
+            
+            # Send results
+            self.bot.send_message(message.chat.id, summary_msg, parse_mode='Markdown')
+            
+            self.show_monitoring_menu(message)
+            logger.info(f"Bulk deletion completed: {deleted_count} deleted, {failed_count} failed")
+            
+        except Exception as e:
+            logger.error(f"Error sending bulk deletion results: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при отправке результатов")
+
     def uninstall_wireguard(self, message):
         try:
             chat_id = message.chat.id
@@ -1046,6 +1440,27 @@ class WireGuardBot:
                 self.show_monitoring_menu(call.message)
                 self.bot.answer_callback_query(call.id)
                 
+            elif call.data == "bulk_delete_confirm":
+                clients_to_delete = getattr(self, 'temp_bulk_deletion', {})
+                if clients_to_delete:
+                    self.perform_bulk_deletion(call.message, clients_to_delete)
+                else:
+                    self.bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text="❌ Данные для удаления не найдены"
+                    )
+                self.bot.answer_callback_query(call.id)
+                
+            elif call.data == "bulk_delete_cancel":
+                self.bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text="❌ Массовое удаление отменено"
+                )
+                self.show_monitoring_menu(call.message)
+                self.bot.answer_callback_query(call.id)
+                
         except Exception as e:
             logger.error(f"Error handling callback: {e}")
             self.bot.answer_callback_query(call.id, "Произошла ошибка")
@@ -1077,6 +1492,8 @@ class WireGuardBot:
             self.bot.register_next_step_handler(message, self.get_config_name)
         elif text == "Массовое_создание":
             self.start_bulk_creation(message)
+        elif text == "Массовое_удаление":
+            self.start_bulk_deletion(message)
         elif text == "Полное_удаление":
             self.confirm_uninstall(message)
         elif text == "Да удалить НАВСЕГДА":
