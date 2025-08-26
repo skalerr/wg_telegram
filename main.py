@@ -376,6 +376,23 @@ class WireGuardBot:
                 if success:
                     self.bot.send_message(call.message.chat.id, message_text, parse_mode='Markdown')
                     
+                    # Check WireGuard status
+                    import time
+                    time.sleep(2)  # Wait for WireGuard to fully start
+                    
+                    try:
+                        # Check if WireGuard is running
+                        wg_status = subprocess.run(['pgrep', '-f', 'wg-quick.*wg0'], 
+                                                 capture_output=True, text=True)
+                        if wg_status.returncode == 0:
+                            status_msg = "🟢 WireGuard сервер активен"
+                        else:
+                            status_msg = "🔴 WireGuard сервер неактивен"
+                        
+                        self.bot.send_message(call.message.chat.id, f"Статус сервера: {status_msg}")
+                    except Exception as e:
+                        logger.error(f"Error checking WireGuard status: {e}")
+                    
                     # Try to send the config file
                     try:
                         config_file_path = Path(f"/etc/wireguard/{config_name}_cl.conf")

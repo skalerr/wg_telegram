@@ -31,20 +31,12 @@ echo "[Peer]" >> /etc/wireguard/wg0.conf
 echo "PublicKey = $(cat "/etc/wireguard/${var_username}_publickey")" >> /etc/wireguard/wg0.conf
 echo "AllowedIPs = $wg_local_ip_hint.${vap_ip_local}/32" >> /etc/wireguard/wg0.conf
 
-# Перезапускаем WireGuard интерфейс
-wg-quick down wg0
-wg-quick up wg0
-
-# Добавим отладочную информацию
-ls -la "/etc/wireguard"
-
+# Remove existing client config if exists
 if [ -e "/etc/wireguard/${var_username}_cl.conf" ]; then
   rm "/etc/wireguard/${var_username}_cl.conf"
 fi
 
-# Добавим отладочную информацию
-ls -la "/etc/wireguard"
-
+# Create client configuration file
 echo "[Interface]
 PrivateKey = $(cat "/etc/wireguard/${var_username}_privatekey")
 Address = $wg_local_ip_hint.${vap_ip_local}/24
@@ -55,11 +47,20 @@ MTU = 1332
 PublicKey = ${var_public_key}
 Endpoint = ${ip_address_glob}:51830
 AllowedIPs = 0.0.0.0/0
-PersistentKeepalive = 20" | tee -a /etc/wireguard/${var_username}_cl.conf
+PersistentKeepalive = 20" > /etc/wireguard/${var_username}_cl.conf
 
-# Перезапускаем WireGuard интерфейс
-wg-quick down wg0
-wg-quick up wg0
+# Restart WireGuard interface only once
+echo "Restarting WireGuard interface..."
+if ! wg-quick down wg0 2>/dev/null; then
+    echo "WireGuard interface was not running"
+fi
+
+if wg-quick up wg0; then
+    echo "WireGuard interface started successfully"
+else
+    echo "Failed to start WireGuard interface"
+    exit 1
+fi
 
 # Перезаписываем значение переменной vap_ip_local в файле variables.sh
 grep -q "vap_ip_local=" variables.sh && sed -i "s/vap_ip_local=.*/vap_ip_local=${vap_ip_local}/" variables.sh || echo "vap_ip_local=${vap_ip_local}" >> variables.sh
