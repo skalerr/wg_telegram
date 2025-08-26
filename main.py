@@ -37,6 +37,10 @@ class WireGuardBot:
     
     def is_authorized(self, chat_id: int) -> bool:
         return chat_id in self.authorized_users
+
+    def escape_markdown(self, text: str) -> str:
+        """Escape special markdown characters"""
+        return text.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]').replace('`', '\\`')
     
     def send_unauthorized_message(self, message):
         self.bot.send_message(
@@ -413,6 +417,20 @@ class WireGuardBot:
                 self.show_monitoring_menu(call.message)
                 self.bot.answer_callback_query(call.id)
                 
+            elif call.data.startswith("restore_confirm:"):
+                temp_filename = call.data.split(":", 1)[1]
+                self.perform_restore(call.message, temp_filename)
+                self.bot.answer_callback_query(call.id)
+                
+            elif call.data == "restore_cancel":
+                self.bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text="❌ Импорт отменен"
+                )
+                self.show_admin_menu(call.message)
+                self.bot.answer_callback_query(call.id)
+                
         except Exception as e:
             logger.error(f"Error handling callback: {e}")
             self.bot.answer_callback_query(call.id, "Произошла ошибка")
@@ -534,7 +552,7 @@ class WireGuardBot:
                 
                 sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
                 for client_name, config_info in sorted_configs:
-                    escaped_name = client_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]')
+                    escaped_name = self.escape_markdown(client_name)
                     summary_msg += f"👤 **{escaped_name}** - {config_info['ip']}\n"
                 
                 self.bot.send_message(message.chat.id, summary_msg, parse_mode='Markdown')
@@ -583,30 +601,409 @@ class WireGuardBot:
             self.bot.send_message(message.chat.id, "❌ Ошибка при отправке конфигураций")
     
     def backup_config(self, message):
+        """Create and send backup configuration as file"""
         try:
+            self.bot.send_message(message.chat.id, "📦 Создание резервной копии конфигурации...")
+            
+            # Create backup using existing script
             result = subprocess.run(['scripts/backup.sh'], capture_output=True, text=True)
-            if result.returncode == 0:
-                self.bot.send_message(message.chat.id, "Резервная копия создана")
-                logger.info("Configuration backed up successfully")
-            else:
-                logger.error(f"Backup failed: {result.stderr}")
-                self.bot.send_message(message.chat.id, "Ошибка при создании резервной копии")
+            if result.returncode != 0:
+                logger.error(f"Backup script failed: {result.stderr}")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при создании резервной копии")
+                return
+            
+            # Create comprehensive backup file
+            backup_data = self.create_backup_data()
+            
+            if not backup_data:
+                self.bot.send_message(message.chat.id, "❌ Не удалось создать резервную копию")
+                return
+            
+            # Create backup file with timestamp
+            from datetime import datetime
+            import json
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_filename = f"wg_backup_{timestamp}.json"
+            
+            with open(backup_filename, 'w', encoding='utf-8') as f:
+                json.dump(backup_data, f, indent=2, ensure_ascii=False)
+            
+            # Send backup file
+            with open(backup_filename, 'rb') as f:
+                self.bot.send_document(
+                    message.chat.id,
+                    f,
+                    caption=f"🗄️ Резервная копия WireGuard\n"
+                           f"📅 Создана: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
+                           f"📊 Клиентов: {len(backup_data.get('clients', {}))}"
+                )
+            
+            # Clean up temp file
+            import os
+            os.remove(backup_filename)
+            
+            self.bot.send_message(message.chat.id, "✅ Резервная копия создана и отправлена")
+            logger.info("Configuration backed up and sent successfully")
+            
         except Exception as e:
             logger.error(f"Error during backup: {e}")
-            self.bot.send_message(message.chat.id, "Ошибка при создании резервной копии")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при создании резервной копии")
+
+    def create_backup_data(self):
+        """Create comprehensive backup data"""
+        try:
+            backup_data = {
+                "version": "1.0",
+                "created": datetime.now().isoformat(),
+                "server_config": {},
+                "clients": {},
+                "variables": {}
+            }
+            
+            # Backup server configuration
+            server_config_path = Path("/etc/wireguard/wg0.conf")
+            if server_config_path.exists():
+                with open(server_config_path, 'r', encoding='utf-8') as f:
+                    backup_data["server_config"]["wg0.conf"] = f.read()
+            
+            # Backup server keys
+            for key_file in ["privatekey", "publickey"]:
+                key_path = Path(f"/etc/wireguard/{key_file}")
+                if key_path.exists():
+                    with open(key_path, 'r', encoding='utf-8') as f:
+                        backup_data["server_config"][key_file] = f.read().strip()
+            
+            # Backup client configurations
+            configs = self.scan_existing_configs()
+            for client_name, config_info in configs.items():
+                client_data = {
+                    "ip": config_info["ip"],
+                    "octet": config_info["octet"],
+                    "config_content": ""
+                }
+                
+                # Read client config file
+                if config_info["file"].exists():
+                    with open(config_info["file"], 'r', encoding='utf-8') as f:
+                        client_data["config_content"] = f.read()
+                
+                # Read client keys if they exist
+                for key_type in ["privatekey", "publickey"]:
+                    key_path = Path(f"/etc/wireguard/{client_name}_{key_type}")
+                    if key_path.exists():
+                        with open(key_path, 'r', encoding='utf-8') as f:
+                            client_data[key_type] = f.read().strip()
+                
+                backup_data["clients"][client_name] = client_data
+            
+            # Backup variables
+            variables_path = Path("scripts/variables.sh")
+            if variables_path.exists():
+                with open(variables_path, 'r', encoding='utf-8') as f:
+                    backup_data["variables"]["variables.sh"] = f.read()
+            
+            env_path = Path("scripts/env.sh")
+            if env_path.exists():
+                with open(env_path, 'r', encoding='utf-8') as f:
+                    backup_data["variables"]["env.sh"] = f.read()
+            
+            return backup_data
+            
+        except Exception as e:
+            logger.error(f"Error creating backup data: {e}")
+            return None
     
     def restore_config(self, message):
+        """Start import process - ask user to send backup file"""
         try:
-            result = subprocess.run(['scripts/restore.sh'], capture_output=True, text=True)
-            if result.returncode == 0:
-                self.bot.send_message(message.chat.id, "Резервная копия импортирована")
-                logger.info("Configuration restored successfully")
-            else:
-                logger.error(f"Restore failed: {result.stderr}")
-                self.bot.send_message(message.chat.id, "Ошибка при восстановлении резервной копии")
+            self.bot.send_message(
+                message.chat.id, 
+                "📤 **Импорт конфигурации из файла**\n\n"
+                "Отправьте файл резервной копии WireGuard (JSON файл с расширением .json)\n"
+                "Файл должен быть создан функцией резервного копирования этого бота.",
+                reply_markup=types.ReplyKeyboardRemove(),
+                parse_mode='Markdown'
+            )
+            
+            # Register handler for file upload
+            self.bot.register_next_step_handler(message, self.handle_restore_file)
+            
         except Exception as e:
-            logger.error(f"Error during restore: {e}")
-            self.bot.send_message(message.chat.id, "Ошибка при восстановлении резервной копии")
+            logger.error(f"Error starting restore: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при запуске импорта")
+
+    def handle_restore_file(self, message):
+        """Handle uploaded backup file"""
+        if not self.is_authorized(message.chat.id):
+            self.send_unauthorized_message(message)
+            return
+        
+        try:
+            # Check if file was sent
+            if not message.document:
+                self.bot.send_message(
+                    message.chat.id, 
+                    "❌ Файл не найден. Отправьте JSON файл с резервной копией."
+                )
+                self.show_admin_menu(message)
+                return
+            
+            # Check file extension
+            if not message.document.file_name.endswith('.json'):
+                self.bot.send_message(
+                    message.chat.id, 
+                    "❌ Неподдерживаемый тип файла. Отправьте JSON файл."
+                )
+                self.show_admin_menu(message)
+                return
+            
+            # Check file size (max 10MB)
+            if message.document.file_size > 10 * 1024 * 1024:
+                self.bot.send_message(
+                    message.chat.id, 
+                    "❌ Файл слишком большой. Максимальный размер: 10MB"
+                )
+                self.show_admin_menu(message)
+                return
+            
+            self.bot.send_message(message.chat.id, "📥 Загрузка файла резервной копии...")
+            
+            # Download file
+            file_info = self.bot.get_file(message.document.file_id)
+            downloaded_file = self.bot.download_file(file_info.file_path)
+            
+            # Save temporarily
+            import tempfile
+            import json
+            
+            with tempfile.NamedTemporaryFile(mode='wb', suffix='.json', delete=False) as temp_file:
+                temp_file.write(downloaded_file)
+                temp_filename = temp_file.name
+            
+            # Parse and validate backup file
+            try:
+                with open(temp_filename, 'r', encoding='utf-8') as f:
+                    backup_data = json.load(f)
+                
+                if not self.validate_backup_file(backup_data):
+                    self.bot.send_message(
+                        message.chat.id, 
+                        "❌ Некорректный файл резервной копии"
+                    )
+                    return
+                
+                # Show confirmation
+                self.show_restore_confirmation(message, backup_data, temp_filename)
+                
+            except json.JSONDecodeError:
+                self.bot.send_message(
+                    message.chat.id, 
+                    "❌ Ошибка чтения файла. Файл поврежден или имеет неправильный формат."
+                )
+                import os
+                os.unlink(temp_filename)
+                self.show_admin_menu(message)
+                
+        except Exception as e:
+            logger.error(f"Error handling restore file: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при обработке файла")
+            self.show_admin_menu(message)
+
+    def validate_backup_file(self, backup_data):
+        """Validate backup file structure"""
+        try:
+            required_fields = ["version", "created", "server_config", "clients"]
+            for field in required_fields:
+                if field not in backup_data:
+                    return False
+            
+            return True
+        except:
+            return False
+
+    def show_restore_confirmation(self, message, backup_data, temp_filename):
+        """Show restore confirmation with backup details"""
+        try:
+            clients_count = len(backup_data.get('clients', {}))
+            created_date = backup_data.get('created', 'Неизвестно')
+            
+            # Parse date for better display
+            try:
+                from datetime import datetime
+                created_dt = datetime.fromisoformat(created_date.replace('Z', '+00:00'))
+                created_str = created_dt.strftime('%d.%m.%Y %H:%M:%S')
+            except:
+                created_str = created_date
+            
+            # Create inline keyboard for confirmation
+            markup = types.InlineKeyboardMarkup()
+            confirm_btn = types.InlineKeyboardButton(
+                "✅ Подтвердить импорт", 
+                callback_data=f"restore_confirm:{temp_filename}"
+            )
+            cancel_btn = types.InlineKeyboardButton(
+                "❌ Отменить", 
+                callback_data="restore_cancel"
+            )
+            markup.row(confirm_btn)
+            markup.row(cancel_btn)
+            
+            confirmation_msg = (
+                f"📋 **Подтверждение импорта**\n\n"
+                f"🗄️ **Детали резервной копии:**\n"
+                f"📅 Создана: {created_str}\n"
+                f"👥 Клиентов: {clients_count}\n"
+                f"📝 Версия: {backup_data.get('version', 'Неизвестно')}\n\n"
+                f"⚠️ **ВНИМАНИЕ!**\n"
+                f"Импорт заменит текущую конфигурацию WireGuard.\n"
+                f"Все существующие клиенты будут удалены!\n\n"
+                f"Продолжить импорт?"
+            )
+            
+            self.bot.send_message(
+                message.chat.id,
+                confirmation_msg,
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error showing restore confirmation: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при подготовке импорта")
+            self.show_admin_menu(message)
+
+    def perform_restore(self, message, temp_filename):
+        """Actually perform the restore operation"""
+        try:
+            # Edit message to show progress
+            self.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                text="⏳ **Выполняется импорт конфигурации...**\n\nПожалуйста, подождите.",
+                parse_mode='Markdown'
+            )
+            
+            # Load backup data
+            import json
+            with open(temp_filename, 'r', encoding='utf-8') as f:
+                backup_data = json.load(f)
+            
+            # Stop WireGuard
+            self.bot.send_message(message.chat.id, "🛑 Остановка WireGuard сервиса...")
+            subprocess.run(['wg-quick', 'down', 'wg0'], capture_output=True, text=True)
+            
+            # Backup current configuration (just in case)
+            import shutil
+            from datetime import datetime
+            backup_dir = f"/tmp/wg_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            import os
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            if Path("/etc/wireguard").exists():
+                shutil.copytree("/etc/wireguard", f"{backup_dir}/wireguard", dirs_exist_ok=True)
+            
+            # Clear current configuration
+            self.bot.send_message(message.chat.id, "🧹 Очистка текущей конфигурации...")
+            subprocess.run(['rm', '-rf', '/etc/wireguard/*'], shell=True, capture_output=True)
+            
+            # Restore server configuration
+            self.bot.send_message(message.chat.id, "🔧 Восстановление конфигурации сервера...")
+            
+            server_config = backup_data.get('server_config', {})
+            
+            # Restore main server config
+            if 'wg0.conf' in server_config:
+                with open('/etc/wireguard/wg0.conf', 'w', encoding='utf-8') as f:
+                    f.write(server_config['wg0.conf'])
+            
+            # Restore server keys
+            for key_file in ['privatekey', 'publickey']:
+                if key_file in server_config:
+                    with open(f'/etc/wireguard/{key_file}', 'w', encoding='utf-8') as f:
+                        f.write(server_config[key_file])
+                    subprocess.run(['chmod', '600' if key_file == 'privatekey' else '644', f'/etc/wireguard/{key_file}'])
+            
+            # Restore client configurations
+            self.bot.send_message(message.chat.id, "👥 Восстановление клиентских конфигураций...")
+            
+            clients = backup_data.get('clients', {})
+            restored_clients = 0
+            
+            for client_name, client_data in clients.items():
+                try:
+                    # Restore client config file
+                    if 'config_content' in client_data and client_data['config_content']:
+                        with open(f'/etc/wireguard/{client_name}_cl.conf', 'w', encoding='utf-8') as f:
+                            f.write(client_data['config_content'])
+                    
+                    # Restore client keys
+                    for key_type in ['privatekey', 'publickey']:
+                        if key_type in client_data:
+                            with open(f'/etc/wireguard/{client_name}_{key_type}', 'w', encoding='utf-8') as f:
+                                f.write(client_data[key_type])
+                            subprocess.run(['chmod', '600' if key_type == 'privatekey' else '644', 
+                                          f'/etc/wireguard/{client_name}_{key_type}'])
+                    
+                    restored_clients += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error restoring client {client_name}: {e}")
+            
+            # Restore variables
+            variables = backup_data.get('variables', {})
+            if 'variables.sh' in variables:
+                with open('scripts/variables.sh', 'w', encoding='utf-8') as f:
+                    f.write(variables['variables.sh'])
+            
+            if 'env.sh' in variables:
+                with open('scripts/env.sh', 'w', encoding='utf-8') as f:
+                    f.write(variables['env.sh'])
+            
+            # Start WireGuard
+            self.bot.send_message(message.chat.id, "🚀 Запуск WireGuard сервиса...")
+            result = subprocess.run(['wg-quick', 'up', 'wg0'], capture_output=True, text=True)
+            
+            # Clean up temp file
+            os.unlink(temp_filename)
+            
+            # Send final result
+            if result.returncode == 0:
+                success_msg = (
+                    f"✅ **Импорт завершен успешно!**\n\n"
+                    f"📊 **Статистика восстановления:**\n"
+                    f"👥 Клиентов восстановлено: {restored_clients}\n"
+                    f"🟢 WireGuard сервис: Активен\n\n"
+                    f"🗄️ Предыдущая конфигурация сохранена в: `{backup_dir}`"
+                )
+            else:
+                success_msg = (
+                    f"⚠️ **Импорт выполнен с ошибками**\n\n"
+                    f"👥 Клиентов восстановлено: {restored_clients}\n"
+                    f"❌ Ошибка запуска WireGuard: {result.stderr[:200]}...\n\n"
+                    f"🗄️ Предыдущая конфигурация сохранена в: `{backup_dir}`"
+                )
+            
+            self.bot.send_message(message.chat.id, success_msg, parse_mode='Markdown')
+            self.show_admin_menu(message)
+            logger.info(f"Configuration restored from backup, {restored_clients} clients restored")
+            
+        except Exception as e:
+            logger.error(f"Error performing restore: {e}")
+            self.bot.send_message(
+                message.chat.id, 
+                f"❌ **Ошибка при импорте:**\n{str(e)[:200]}...\n\n"
+                f"Попробуйте восстановить конфигурацию вручную из резервной копии в `{backup_dir if 'backup_dir' in locals() else '/tmp'}`",
+                parse_mode='Markdown'
+            )
+            self.show_admin_menu(message)
+            
+            # Clean up temp file
+            try:
+                import os
+                if os.path.exists(temp_filename):
+                    os.unlink(temp_filename)
+            except:
+                pass
     
     def install_wireguard(self, message):
         config_file = Path('/etc/wireguard/wg0.conf')
@@ -775,7 +1172,8 @@ class WireGuardBot:
                 # Sort by octet for display
                 sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
                 for client_name, config_info in sorted_configs[:10]:  # Show max 10 entries
-                    success_msg += f"• {client_name}: {config_info['ip']}\n"
+                    escaped_name = self.escape_markdown(client_name)
+                    success_msg += f"• {escaped_name}: {config_info['ip']}\n"
                 
                 if len(configs) > 10:
                     success_msg += f"... и ещё {len(configs) - 10} клиентов\n"
@@ -856,7 +1254,7 @@ class WireGuardBot:
                     
                     # Format entry with emoji indicators and escape markdown
                     status_emoji = "🟢"  # Green circle for active
-                    escaped_name = client_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]')
+                    escaped_name = self.escape_markdown(client_name)
                     monitor_msg += f"{status_emoji} **{escaped_name}**\n"
                     monitor_msg += f"   🌍 IP: `{config_info['ip']}`\n"
                     monitor_msg += f"   📅 Создан: {time_str}\n"
@@ -941,7 +1339,8 @@ class WireGuardBot:
                 
                 for client_name, config_info in sorted_configs:
                     mod_time = datetime.fromtimestamp(config_info['file'].stat().st_mtime)
-                    stats_msg += f"• **{client_name}** ({config_info['ip']}) - {mod_time.strftime('%d.%m.%Y %H:%M')}\n"
+                    escaped_name = self.escape_markdown(client_name)
+                    stats_msg += f"• **{escaped_name}** ({config_info['ip']}) - {mod_time.strftime('%d.%m.%Y %H:%M')}\n"
             else:
                 stats_msg += "• Клиентские конфигурации не найдены\n"
             
