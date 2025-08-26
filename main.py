@@ -202,11 +202,11 @@ def func(message):
             bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
             bot.register_next_step_handler(message, add_vpn)
         elif message.text == "Полное_удаление":
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                botton_yes = types.KeyboardButton("Да удалить НАВСЕГДА")
-                botton_no = types.KeyboardButton("Нет")
-                markup.add(botton_yes, botton_no)
-                bot.send_message(message.chat.id, text="Wireguard будет удален навсегда со всеми настройками. \nХотите продолжить?", reply_markup=markup)
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            botton_yes = types.KeyboardButton("Да удалить НАВСЕГДА")
+            botton_no = types.KeyboardButton("Нет")
+            markup.add(botton_yes, botton_no)
+            bot.send_message(message.chat.id, text="Wireguard будет удален навсегда со всеми настройками. \nХотите продолжить?", reply_markup=markup)
         elif (message.text == "ДА УДАЛИТЬ НАВСЕГДА"):
             uninstall_wireguard(message)
 
