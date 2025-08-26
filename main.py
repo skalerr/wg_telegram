@@ -115,14 +115,15 @@ class WireGuardBot:
         stats_btn = types.KeyboardButton("Статистика")
         monitor_btn = types.KeyboardButton("Монитор_клиентов")
         add_btn = types.KeyboardButton("Добавить_конфиг")
+        bulk_add_btn = types.KeyboardButton("Массовое_создание")
         delete_btn = types.KeyboardButton("Удалить_конфиг")
         recreate_btn = types.KeyboardButton("Пересоздать_конфиги")
         back_btn = types.KeyboardButton("Назад")
         
         markup.add(stats_btn, monitor_btn)
         markup.add(configs_btn)
-        markup.add(add_btn, delete_btn)
-        markup.add(recreate_btn)
+        markup.add(add_btn, bulk_add_btn)
+        markup.add(delete_btn, recreate_btn)
         markup.add(back_btn)
         self.bot.send_message(message.chat.id, text="📊 Мониторинг VPN сервера", reply_markup=markup)
 
@@ -139,46 +140,211 @@ class WireGuardBot:
         return True
     
     def delete_vpn_config(self, message):
+        """Delete VPN client configuration by name or IP octet"""
         if not self.validate_message_type(message):
             self.show_monitoring_menu(message)
             return
         
         try:
-            if not self.is_valid_ip_octet(message.text):
-                self.bot.send_message(
-                    message.chat.id, 
-                    f"IP-адрес не может быть удален. Введите число от 2 до 253"
-                )
+            input_text = self.sanitize_input(message.text.strip())
+            
+            # Get current configurations
+            configs = self.scan_existing_configs()
+            
+            if not configs:
+                self.bot.send_message(message.chat.id, "❌ Нет клиентов для удаления")
                 self.show_monitoring_menu(message)
                 return
             
-            config_string = self.sanitize_input(message.text)
+            # Determine if input is client name or IP octet
+            client_name = None
+            ip_octet = None
             
-            # Execute deletion scripts with error handling
-            result1 = subprocess.run(['scripts/del_cl.sh', config_string], capture_output=True, text=True)
-            if result1.returncode != 0:
-                logger.error(f"Failed to run del_cl.sh: {result1.stderr}")
-                self.bot.send_message(message.chat.id, "Ошибка при удалении конфигурации")
-                return
+            if input_text.isdigit():
+                # Input is IP octet
+                ip_octet = int(input_text)
+                if not (2 <= ip_octet <= 254):
+                    self.bot.send_message(
+                        message.chat.id, 
+                        "❌ IP октет должен быть от 2 до 254"
+                    )
+                    self.show_monitoring_menu(message)
+                    return
+                
+                # Find client by IP octet
+                for name, info in configs.items():
+                    if int(info['octet']) == ip_octet:
+                        client_name = name
+                        break
+                
+                if not client_name:
+                    self.bot.send_message(
+                        message.chat.id, 
+                        f"❌ Клиент с IP {self.wg_ip_hint}.{ip_octet} не найден"
+                    )
+                    self.show_monitoring_menu(message)
+                    return
+            else:
+                # Input is client name
+                if input_text not in configs:
+                    self.bot.send_message(
+                        message.chat.id, 
+                        f"❌ Клиент '{input_text}' не найден"
+                    )
+                    self.show_monitoring_menu(message)
+                    return
+                
+                client_name = input_text
+                ip_octet = int(configs[client_name]['octet'])
             
-            script_path = Path(__file__).parent
-            rm_user_script = script_path / "rm_user.sh"
-            if rm_user_script.exists():
-                result2 = subprocess.run([str(rm_user_script), config_string], capture_output=True, text=True)
-                if result2.returncode != 0:
-                    logger.error(f"Failed to run rm_user.sh: {result2.stderr}")
+            # Perform deletion
+            success, message_text = self.perform_client_deletion(client_name, ip_octet, message.chat.id)
             
-            self.bot.send_message(
-                message.chat.id, 
-                f"IP-адрес {self.wg_ip_hint}.{config_string} успешно удален."
-            )
-            logger.info(f"Deleted VPN config for IP {self.wg_ip_hint}.{config_string}")
-            
+            if success:
+                self.bot.send_message(message.chat.id, message_text, parse_mode='Markdown')
+                logger.info(f"Successfully deleted client: {client_name} (IP: {self.wg_ip_hint}.{ip_octet})")
+            else:
+                self.bot.send_message(message.chat.id, f"❌ {message_text}")
+                logger.error(f"Failed to delete client: {client_name} - {message_text}")
+                
         except Exception as e:
             logger.error(f"Error deleting VPN config: {e}")
-            self.bot.send_message(message.chat.id, "Произошла ошибка при удалении конфигурации")
+            self.bot.send_message(message.chat.id, "❌ Произошла ошибка при удалении конфигурации")
         
         self.show_monitoring_menu(message)
+
+    def perform_client_deletion(self, client_name, ip_octet, chat_id):
+        """Actually perform the client deletion"""
+        try:
+            self.bot.send_message(
+                chat_id,
+                f"🗑️ Удаление клиента **{self.escape_markdown(client_name)}**...",
+                parse_mode='Markdown'
+            )
+            
+            deleted_files = []
+            errors = []
+            
+            # 1. Remove from main server config (wg0.conf)
+            try:
+                self.remove_client_from_server_config(client_name, ip_octet)
+                deleted_files.append("server config peer")
+            except Exception as e:
+                errors.append(f"server config: {str(e)}")
+            
+            # 2. Remove client config file
+            client_config_path = Path(f"/etc/wireguard/{client_name}_cl.conf")
+            if client_config_path.exists():
+                try:
+                    client_config_path.unlink()
+                    deleted_files.append("client config")
+                except Exception as e:
+                    errors.append(f"client config: {str(e)}")
+            
+            # 3. Remove client keys
+            for key_type in ["privatekey", "publickey"]:
+                key_path = Path(f"/etc/wireguard/{client_name}_{key_type}")
+                if key_path.exists():
+                    try:
+                        key_path.unlink()
+                        deleted_files.append(f"client {key_type}")
+                    except Exception as e:
+                        errors.append(f"{key_type}: {str(e)}")
+            
+            # 4. Update configs.txt
+            try:
+                self.update_configs_file_after_deletion(client_name, ip_octet)
+                deleted_files.append("configs.txt entry")
+            except Exception as e:
+                errors.append(f"configs.txt: {str(e)}")
+            
+            # 5. Restart WireGuard
+            try:
+                result = subprocess.run(['wg-quick', 'down', 'wg0'], capture_output=True, text=True)
+                result = subprocess.run(['wg-quick', 'up', 'wg0'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    deleted_files.append("WireGuard restarted")
+                else:
+                    errors.append(f"WireGuard restart: {result.stderr}")
+            except Exception as e:
+                errors.append(f"WireGuard restart: {str(e)}")
+            
+            # Prepare result message
+            if deleted_files and not errors:
+                return True, f"✅ **Клиент '{client_name}' полностью удален**\n\n📂 Удалено: {', '.join(deleted_files)}"
+            elif deleted_files and errors:
+                return True, f"⚠️ **Клиент '{client_name}' частично удален**\n\n✅ Удалено: {', '.join(deleted_files)}\n❌ Ошибки: {', '.join(errors)}"
+            else:
+                return False, f"Не удалось удалить клиента: {', '.join(errors)}"
+                
+        except Exception as e:
+            logger.error(f"Error in perform_client_deletion: {e}")
+            return False, f"Критическая ошибка: {str(e)}"
+
+    def remove_client_from_server_config(self, client_name, ip_octet):
+        """Remove client peer from server wg0.conf"""
+        config_path = Path("/etc/wireguard/wg0.conf")
+        if not config_path.exists():
+            raise Exception("Server config not found")
+        
+        # Read current config
+        with open(config_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        # Find and remove client peer section
+        new_lines = []
+        skip_lines = 0
+        peer_found = False
+        
+        for i, line in enumerate(lines):
+            if skip_lines > 0:
+                skip_lines -= 1
+                continue
+                
+            # Look for the AllowedIPs line with our client's IP
+            if line.strip() == f"AllowedIPs = {self.wg_ip_hint}.{ip_octet}/32":
+                peer_found = True
+                # Remove this line and the two lines before it ([Peer] and PublicKey)
+                # Remove the last 2 lines from new_lines (they should be [Peer] and PublicKey)
+                if len(new_lines) >= 2:
+                    new_lines = new_lines[:-2]
+                # Skip current line
+                continue
+            
+            new_lines.append(line)
+        
+        if not peer_found:
+            raise Exception(f"Peer with IP {self.wg_ip_hint}.{ip_octet} not found in server config")
+        
+        # Write updated config
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+
+    def update_configs_file_after_deletion(self, client_name, ip_octet):
+        """Update configs.txt after client deletion"""
+        configs_file = Path("configs.txt")
+        
+        if not configs_file.exists():
+            return  # File doesn't exist, nothing to update
+        
+        try:
+            with open(configs_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Remove lines containing the client
+            new_lines = []
+            for line in lines:
+                # Skip lines that contain this client's info
+                if not (client_name in line or f".{ip_octet} =" in line):
+                    new_lines.append(line)
+            
+            # Write updated file
+            with open(configs_file, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+                
+        except Exception as e:
+            logger.error(f"Error updating configs.txt: {e}")
+            raise
 
 
 
@@ -306,6 +472,434 @@ class WireGuardBot:
             logger.error(f"Error creating VPN config: {e}")
             return False, f"Произошла ошибка: {str(e)}"
 
+    def start_bulk_creation(self, message):
+        """Start bulk client creation process"""
+        try:
+            help_text = (
+                "📋 **Массовое создание клиентов**\n\n"
+                "Отправьте список имен клиентов в одном из форматов:\n\n"
+                "**Формат 1 - Простой список:**\n"
+                "```\n"
+                "client1\n"
+                "client2\n"
+                "client3\n"
+                "```\n\n"
+                "**Формат 2 - С указанием IP:**\n"
+                "```\n"
+                "client1:5\n"
+                "client2:10\n"
+                "client3:15\n"
+                "```\n"
+                "(где число после ':' - последний октет IP)\n\n"
+                "**Формат 3 - Смешанный:**\n"
+                "```\n"
+                "client1\n"
+                "client2:20\n"
+                "client3\n"
+                "```\n\n"
+                "⚠️ **Ограничения:**\n"
+                "• Максимум 50 клиентов за раз\n"
+                "• Имена только латинские буквы, цифры, дефисы, подчеркивания\n"
+                "• IP октеты от 2 до 254\n\n"
+                "Отправьте список клиентов:"
+            )
+            
+            self.bot.send_message(
+                message.chat.id,
+                help_text,
+                reply_markup=types.ReplyKeyboardRemove(),
+                parse_mode='Markdown'
+            )
+            
+            self.bot.register_next_step_handler(message, self.handle_bulk_creation)
+            
+        except Exception as e:
+            logger.error(f"Error starting bulk creation: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при запуске массового создания")
+            self.show_monitoring_menu(message)
+
+    def handle_bulk_creation(self, message):
+        """Handle bulk client creation"""
+        if not self.is_authorized(message.chat.id):
+            self.send_unauthorized_message(message)
+            return
+        
+        if not self.validate_message_type(message):
+            self.show_monitoring_menu(message)
+            return
+        
+        try:
+            # Parse client list
+            client_list = self.parse_client_list(message.text)
+            
+            if not client_list:
+                self.bot.send_message(message.chat.id, "❌ Не удалось распознать список клиентов")
+                self.show_monitoring_menu(message)
+                return
+            
+            if len(client_list) > 50:
+                self.bot.send_message(message.chat.id, "❌ Слишком много клиентов. Максимум 50 за раз.")
+                self.show_monitoring_menu(message)
+                return
+            
+            # Validate clients
+            validation_result = self.validate_bulk_clients(client_list)
+            if not validation_result["valid"]:
+                error_msg = f"❌ Ошибки в списке клиентов:\n{validation_result['errors']}"
+                self.bot.send_message(message.chat.id, error_msg)
+                self.show_monitoring_menu(message)
+                return
+            
+            # Show confirmation
+            self.show_bulk_confirmation(message, client_list)
+            
+        except Exception as e:
+            logger.error(f"Error handling bulk creation: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при обработке списка")
+            self.show_monitoring_menu(message)
+
+    def parse_client_list(self, text):
+        """Parse client list from text"""
+        try:
+            clients = []
+            lines = text.strip().split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#'):  # Skip empty lines and comments
+                    continue
+                
+                if ':' in line:
+                    # Format: client_name:ip_octet
+                    name, ip_str = line.split(':', 1)
+                    name = name.strip()
+                    try:
+                        ip_octet = int(ip_str.strip())
+                        if ip_octet < 2 or ip_octet > 254:
+                            continue
+                    except ValueError:
+                        continue
+                    clients.append({"name": name, "ip": ip_octet})
+                else:
+                    # Format: client_name (auto IP)
+                    clients.append({"name": line, "ip": "auto"})
+            
+            return clients
+            
+        except Exception as e:
+            logger.error(f"Error parsing client list: {e}")
+            return []
+
+    def validate_bulk_clients(self, client_list):
+        """Validate bulk client list"""
+        try:
+            errors = []
+            names = set()
+            used_ips = set()
+            
+            # Get existing configurations
+            existing_configs = self.scan_existing_configs()
+            existing_names = set(existing_configs.keys())
+            existing_ips = set(int(config['octet']) for config in existing_configs.values())
+            
+            import re
+            name_pattern = re.compile(r'^[a-zA-Z0-9_-]+$')
+            
+            for i, client in enumerate(client_list, 1):
+                name = client["name"]
+                ip_octet = client["ip"]
+                
+                # Validate name format
+                if not name_pattern.match(name):
+                    errors.append(f"Строка {i}: недопустимые символы в имени '{name}'")
+                
+                # Check name length
+                if len(name) > 50:
+                    errors.append(f"Строка {i}: имя '{name}' слишком длинное (макс 50 символов)")
+                
+                # Check for duplicate names in list
+                if name in names:
+                    errors.append(f"Строка {i}: дублирующееся имя '{name}'")
+                names.add(name)
+                
+                # Check if name already exists
+                if name in existing_names:
+                    errors.append(f"Строка {i}: клиент '{name}' уже существует")
+                
+                # Validate IP if specified
+                if ip_octet != "auto":
+                    if ip_octet in used_ips:
+                        errors.append(f"Строка {i}: дублирующийся IP .{ip_octet}")
+                    if ip_octet in existing_ips:
+                        errors.append(f"Строка {i}: IP .{ip_octet} уже используется")
+                    used_ips.add(ip_octet)
+            
+            return {
+                "valid": len(errors) == 0,
+                "errors": "\n".join(errors)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error validating bulk clients: {e}")
+            return {"valid": False, "errors": "Ошибка при валидации списка"}
+
+    def show_bulk_confirmation(self, message, client_list):
+        """Show bulk creation confirmation"""
+        try:
+            # Count auto and manual IPs
+            auto_count = sum(1 for c in client_list if c["ip"] == "auto")
+            manual_count = len(client_list) - auto_count
+            
+            # Create preview
+            preview_lines = []
+            for i, client in enumerate(client_list[:10]):  # Show first 10
+                ip_info = f"IP: .{client['ip']}" if client["ip"] != "auto" else "IP: авто"
+                preview_lines.append(f"• **{self.escape_markdown(client['name'])}** ({ip_info})")
+            
+            if len(client_list) > 10:
+                preview_lines.append(f"... и ещё {len(client_list) - 10} клиентов")
+            
+            confirmation_msg = (
+                f"📋 **Подтверждение массового создания**\n\n"
+                f"👥 **Клиентов к созданию:** {len(client_list)}\n"
+                f"🔄 **Автоматический IP:** {auto_count}\n"
+                f"📍 **Указанный IP:** {manual_count}\n\n"
+                f"**Предварительный просмотр:**\n" + "\n".join(preview_lines) + "\n\n"
+                f"⏱️ **Примерное время:** {len(client_list) * 3} сек.\n\n"
+                f"Создать всех клиентов?"
+            )
+            
+            # Create inline keyboard
+            markup = types.InlineKeyboardMarkup()
+            confirm_btn = types.InlineKeyboardButton(
+                "✅ Создать всех", 
+                callback_data="bulk_create_confirm"
+            )
+            cancel_btn = types.InlineKeyboardButton(
+                "❌ Отменить", 
+                callback_data="bulk_create_cancel"
+            )
+            markup.row(confirm_btn)
+            markup.row(cancel_btn)
+            
+            # Store client list temporarily
+            self.temp_bulk_clients = client_list
+            
+            self.bot.send_message(
+                message.chat.id,
+                confirmation_msg,
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error showing bulk confirmation: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при подготовке создания")
+            self.show_monitoring_menu(message)
+
+    def perform_bulk_creation(self, message, client_list):
+        """Actually perform bulk client creation"""
+        try:
+            # Edit message to show progress
+            self.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                text="⏳ **Массовое создание клиентов...**\n\nПожалуйста, подождите.",
+                parse_mode='Markdown'
+            )
+            
+            results = {
+                "created": [],
+                "failed": [],
+                "total": len(client_list)
+            }
+            
+            # Progress tracking
+            progress_msg_id = None
+            
+            for i, client in enumerate(client_list, 1):
+                try:
+                    # Update progress every 5 clients or on last client
+                    if i % 5 == 0 or i == len(client_list):
+                        progress_text = (
+                            f"⏳ **Создание клиентов...**\n\n"
+                            f"📊 Прогресс: {i}/{len(client_list)}\n"
+                            f"✅ Создано: {len(results['created'])}\n"
+                            f"❌ Ошибок: {len(results['failed'])}\n\n"
+                            f"Текущий клиент: **{self.escape_markdown(client['name'])}**"
+                        )
+                        
+                        if progress_msg_id:
+                            try:
+                                self.bot.edit_message_text(
+                                    chat_id=message.chat.id,
+                                    message_id=progress_msg_id,
+                                    text=progress_text,
+                                    parse_mode='Markdown'
+                                )
+                            except:
+                                pass
+                        else:
+                            progress_msg = self.bot.send_message(
+                                message.chat.id,
+                                progress_text,
+                                parse_mode='Markdown'
+                            )
+                            progress_msg_id = progress_msg.message_id
+                    
+                    # Create client
+                    success, result_msg = self.add_vpn_config(client["name"], client["ip"])
+                    
+                    if success:
+                        results["created"].append({
+                            "name": client["name"],
+                            "ip": client["ip"]
+                        })
+                        logger.info(f"Bulk creation: {client['name']} created successfully")
+                    else:
+                        results["failed"].append({
+                            "name": client["name"],
+                            "error": result_msg
+                        })
+                        logger.error(f"Bulk creation: {client['name']} failed - {result_msg}")
+                    
+                    # Small delay to prevent overwhelming
+                    import time
+                    time.sleep(0.5)
+                    
+                except Exception as e:
+                    results["failed"].append({
+                        "name": client["name"],
+                        "error": str(e)
+                    })
+                    logger.error(f"Error creating client {client['name']}: {e}")
+            
+            # Send final results
+            self.send_bulk_results(message, results)
+            
+            # Clean up temp data
+            if hasattr(self, 'temp_bulk_clients'):
+                delattr(self, 'temp_bulk_clients')
+            
+        except Exception as e:
+            logger.error(f"Error performing bulk creation: {e}")
+            self.bot.send_message(
+                message.chat.id,
+                f"❌ **Критическая ошибка при массовом создании:**\n{str(e)[:200]}",
+                parse_mode='Markdown'
+            )
+            self.show_monitoring_menu(message)
+
+    def send_bulk_results(self, message, results):
+        """Send bulk creation results"""
+        try:
+            created_count = len(results["created"])
+            failed_count = len(results["failed"])
+            total_count = results["total"]
+            
+            # Create results summary
+            if created_count == total_count:
+                status_emoji = "✅"
+                status_text = "Все клиенты созданы успешно!"
+            elif created_count > 0:
+                status_emoji = "⚠️"
+                status_text = "Создание завершено с ошибками"
+            else:
+                status_emoji = "❌"
+                status_text = "Не удалось создать ни одного клиента"
+            
+            summary_msg = (
+                f"{status_emoji} **{status_text}**\n\n"
+                f"📊 **Статистика:**\n"
+                f"✅ Создано: {created_count}/{total_count}\n"
+                f"❌ Ошибок: {failed_count}\n"
+            )
+            
+            # Add created clients list
+            if results["created"]:
+                summary_msg += f"\n🟢 **Созданные клиенты:**\n"
+                for client in results["created"][:10]:  # Show first 10
+                    ip_info = f"(.{client['ip']})" if client["ip"] != "auto" else "(авто IP)"
+                    summary_msg += f"• **{self.escape_markdown(client['name'])}** {ip_info}\n"
+                
+                if len(results["created"]) > 10:
+                    summary_msg += f"... и ещё {len(results['created']) - 10} клиентов\n"
+            
+            # Add failed clients list
+            if results["failed"]:
+                summary_msg += f"\n🔴 **Ошибки:**\n"
+                for client in results["failed"][:5]:  # Show first 5 errors
+                    error_short = client["error"][:50] + "..." if len(client["error"]) > 50 else client["error"]
+                    summary_msg += f"• **{self.escape_markdown(client['name'])}**: {error_short}\n"
+                
+                if len(results["failed"]) > 5:
+                    summary_msg += f"... и ещё {len(results['failed']) - 5} ошибок\n"
+            
+            # Send results
+            self.bot.send_message(message.chat.id, summary_msg, parse_mode='Markdown')
+            
+            # Send configs archive if there are created clients
+            if results["created"]:
+                self.send_bulk_configs_archive(message, results["created"])
+            
+            self.show_monitoring_menu(message)
+            logger.info(f"Bulk creation completed: {created_count} created, {failed_count} failed")
+            
+        except Exception as e:
+            logger.error(f"Error sending bulk results: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при отправке результатов")
+
+    def send_bulk_configs_archive(self, message, created_clients):
+        """Send archive with all created configs"""
+        try:
+            if len(created_clients) <= 5:
+                # Send configs individually for small batches
+                for client in created_clients:
+                    try:
+                        config_file_path = Path(f"/etc/wireguard/{client['name']}_cl.conf")
+                        if config_file_path.exists():
+                            with open(config_file_path, 'rb') as f:
+                                self.bot.send_document(
+                                    message.chat.id,
+                                    f,
+                                    caption=f"📄 {client['name']}"
+                                )
+                    except Exception as e:
+                        logger.error(f"Error sending individual config {client['name']}: {e}")
+            else:
+                # Create ZIP archive for large batches
+                import zipfile
+                import tempfile
+                import os
+                
+                with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temp_zip:
+                    with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                        configs_added = 0
+                        for client in created_clients:
+                            config_file_path = Path(f"/etc/wireguard/{client['name']}_cl.conf")
+                            if config_file_path.exists():
+                                zipf.write(
+                                    config_file_path, 
+                                    f"{client['name']}.conf"
+                                )
+                                configs_added += 1
+                    
+                    if configs_added > 0:
+                        with open(temp_zip.name, 'rb') as f:
+                            self.bot.send_document(
+                                message.chat.id,
+                                f,
+                                caption=f"📦 Архив конфигураций ({configs_added} файлов)",
+                                filename=f"wireguard_configs_{len(created_clients)}.zip"
+                            )
+                    
+                    # Clean up
+                    os.unlink(temp_zip.name)
+                    
+        except Exception as e:
+            logger.error(f"Error creating configs archive: {e}")
+            self.bot.send_message(message.chat.id, "⚠️ Не удалось создать архив конфигураций")
+
     def uninstall_wireguard(self, message):
         try:
             chat_id = message.chat.id
@@ -431,6 +1025,27 @@ class WireGuardBot:
                 self.show_admin_menu(call.message)
                 self.bot.answer_callback_query(call.id)
                 
+            elif call.data == "bulk_create_confirm":
+                client_list = getattr(self, 'temp_bulk_clients', [])
+                if client_list:
+                    self.perform_bulk_creation(call.message, client_list)
+                else:
+                    self.bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text="❌ Данные для создания не найдены"
+                    )
+                self.bot.answer_callback_query(call.id)
+                
+            elif call.data == "bulk_create_cancel":
+                self.bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text="❌ Массовое создание отменено"
+                )
+                self.show_monitoring_menu(call.message)
+                self.bot.answer_callback_query(call.id)
+                
         except Exception as e:
             logger.error(f"Error handling callback: {e}")
             self.bot.answer_callback_query(call.id, "Произошла ошибка")
@@ -460,6 +1075,8 @@ class WireGuardBot:
         elif text == "Добавить_конфиг":
             self.bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
             self.bot.register_next_step_handler(message, self.get_config_name)
+        elif text == "Массовое_создание":
+            self.start_bulk_creation(message)
         elif text == "Полное_удаление":
             self.confirm_uninstall(message)
         elif text == "Да удалить НАВСЕГДА":
@@ -518,26 +1135,46 @@ class WireGuardBot:
         )
     
     def prompt_delete_config(self, message):
-        self.bot.send_message(
-            message.chat.id, 
-            "Введите последний октет IP, который нужно удалить.", 
-            reply_markup=types.ReplyKeyboardRemove()
-        )
-        
+        """Show list of clients and prompt for deletion"""
         try:
-            configs_file = Path("configs.txt")
-            if configs_file.exists():
-                with open(configs_file, 'r', encoding='utf-8') as file:
-                    config_content = file.read()
-                self.bot.send_message(message.chat.id, config_content)
+            # Get current configurations
+            configs = self.scan_existing_configs()
+            
+            if not configs:
+                self.bot.send_message(
+                    message.chat.id, 
+                    "❌ Нет клиентов для удаления",
+                    reply_markup=types.ReplyKeyboardRemove()
+                )
+                self.show_monitoring_menu(message)
+                return
+            
+            # Create client list message
+            clients_msg = "👥 **Список клиентов для удаления:**\n\n"
+            
+            sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
+            for client_name, config_info in sorted_configs:
+                escaped_name = self.escape_markdown(client_name)
+                clients_msg += f"• **{escaped_name}** - {config_info['ip']} (октет: {config_info['octet']})\n"
+            
+            clients_msg += f"\n📝 **Способы удаления:**\n"
+            clients_msg += f"**По имени:** Введите точное имя клиента\n"
+            clients_msg += f"**По IP:** Введите последний октет IP\n\n"
+            clients_msg += f"Например: `server1` или `47`"
+            
+            self.bot.send_message(
+                message.chat.id, 
+                clients_msg, 
+                reply_markup=types.ReplyKeyboardRemove(),
+                parse_mode='Markdown'
+            )
+            
+            self.bot.register_next_step_handler(message, self.delete_vpn_config)
+            
         except Exception as e:
-            logger.error(f"Error reading configs file: {e}")
-        
-        self.bot.send_message(
-            message.chat.id, 
-            f"Введите последний октет IP. Например, для удаления {self.wg_ip_hint}.47 введите 47"
-        )
-        self.bot.register_next_step_handler(message, self.delete_vpn_config)
+            logger.error(f"Error showing delete prompt: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при получении списка клиентов")
+            self.show_monitoring_menu(message)
     
     def send_configs(self, message):
         try:
