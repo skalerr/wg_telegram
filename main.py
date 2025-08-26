@@ -1,5 +1,5 @@
 import telebot
-from telebot import types  # для указание типов
+from telebot import types # для указание типов
 import time
 import datetime
 import subprocess
@@ -8,7 +8,7 @@ import os
 import glob
 import qrcode
 from config import *
-
+#from config import *
 config = ""
 # Создаем экземпляр бота
 bot = telebot.TeleBot(api_tg)
@@ -178,22 +178,6 @@ def id(message):
     bot.send_message(message.chat.id, text="Id :"+str(message.chat.id)+"\nusername :"+str(message.from_user.username))
     print(str(message.chat.id))
 
-
-def handle_import_json(message):
-    """Импорт конфигурации из json файла и перезапуск окружения."""
-    if message.document is None:
-        bot.send_message(message.chat.id, 'Файл не получен.')
-        buttons(message)
-        return
-    file_info = bot.get_file(message.document.file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    json_path = 'import_config.json'
-    with open(json_path, 'wb') as new_file:
-        new_file.write(downloaded_file)
-    subprocess.run(['python3', 'scripts/import_json.py', json_path])
-    bot.send_message(message.chat.id, 'Конфигурация импортирована')
-    buttons(message)
-
 @bot.message_handler(content_types=['text'])
 def func(message):
     if message.chat.id in mainid:
@@ -213,11 +197,8 @@ def func(message):
                 botton23 = types.KeyboardButton("Полное_удаление")
                 botton_reset = types.KeyboardButton("Сохранить_конигурацию")
                 botton_reset_up = types.KeyboardButton("Импортировать_конигурацию")
-                botton_export_json = types.KeyboardButton("Экспорт_JSON")
-                botton_import_json = types.KeyboardButton("Импорт_JSON")
                 back = types.KeyboardButton("Назад")
-                markup.add(botton22, botton23, botton_reset, botton_reset_up,
-                           botton_export_json, botton_import_json, back)
+                markup.add(botton22, botton23, botton_reset, botton_reset_up, back)
                 bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
         elif message.text == "Удалить_конфиг":
             bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить.", reply_markup=types.ReplyKeyboardRemove())
@@ -271,14 +252,6 @@ def func(message):
             subprocess.run(['scripts/restore.sh'])
             print("ok2")
             bot.send_message(message.chat.id, text="Резервная копия импортированна")
-        elif message.text == "Экспорт_JSON":
-            subprocess.run(['python3', 'scripts/export_json.py'])
-            with open('wg_config_export.json', 'rb') as file:
-                bot.send_document(message.chat.id, document=file)
-            bot.send_message(message.chat.id, "JSON создан")
-        elif message.text == "Импорт_JSON":
-            bot.send_message(message.chat.id, "Отправьте JSON файл", reply_markup=types.ReplyKeyboardRemove())
-            bot.register_next_step_handler(message, handle_import_json)
         elif message.text == "Установка_Wireguard":
             # Проверка наличия файла
             file_path = '/etc/wireguard/wg0.conf'
