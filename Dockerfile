@@ -17,7 +17,7 @@ RUN ip addr add 192.168.1.100/24 dev ens18 || true
 RUN ip link set dev ens18 up || true
 
 # Устанавливаем переменную среды для корректной работы Python внутри контейнера
-ENV LANG C.UTF-8
+ENV LANG=C.UTF-8
 
 # Устанавливаем рабочую директорию внутри контейнера
 WORKDIR /app
