@@ -2416,21 +2416,20 @@ class WireGuardBot:
     def get_server_status(self) -> dict:
         """Get WireGuard server status"""
         try:
-            # Check if WireGuard is running (use ps instead of systemctl in container)
-            result = subprocess.run(
-                ['pgrep', '-f', 'wg-quick.*wg0'], 
-                capture_output=True, 
-                text=True
-            )
+            # Check if WireGuard interface is active using wg show
+            wg_result = subprocess.run(['wg', 'show'], capture_output=True, text=True)
             
-            status = "✅ Активен" if result.returncode == 0 else "❌ Неактивен"
-            
-            # Get interface info if active
-            interface_info = None
-            if result.returncode == 0:
-                wg_result = subprocess.run(['wg', 'show'], capture_output=True, text=True)
-                if wg_result.returncode == 0 and wg_result.stdout:
+            if wg_result.returncode == 0 and wg_result.stdout.strip():
+                # Parse wg show output to check if wg0 interface is active
+                if 'interface: wg0' in wg_result.stdout:
+                    status = "✅ Активен"
                     interface_info = "wg0"
+                else:
+                    status = "❌ Неактивен"
+                    interface_info = None
+            else:
+                status = "❌ Неактивен"
+                interface_info = None
             
             return {
                 'status': status,
