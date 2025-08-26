@@ -2,9 +2,44 @@
 
 var_username=$1
 specified_ip=$2
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Source configuration files with proper paths
+if [ -f "$PARENT_DIR/variables.sh" ]; then
+    source "$PARENT_DIR/variables.sh"
+elif [ -f "$SCRIPT_DIR/variables.sh" ]; then
+    source "$SCRIPT_DIR/variables.sh"
+else
+    echo "Warning: variables.sh not found, using defaults"
+    vap_ip_local=1
+    wg_local_ip="10.20.20.1"
+    wg_local_ip_hint="10.20.20"
+fi
+
+if [ -f "$SCRIPT_DIR/env.sh" ]; then
+    source "$SCRIPT_DIR/env.sh"
+else
+    echo "Warning: env.sh not found, using defaults"
+    wg_local_ip_hint="${WG_LOCAL_IP_HINT:-10.20.20}"
+fi
+
 var_ip_address_glob2="$ip_address_glob"
-source variables.sh
-source scripts/env.sh
+
+# Get server public key
+if [ -f "/etc/wireguard/publickey" ]; then
+    var_public_key=$(cat /etc/wireguard/publickey)
+else
+    echo "Error: Server public key not found"
+    exit 1
+fi
+
+# Get external IP
+if [ -z "$ip_address_glob" ]; then
+    ip_address_glob=$(curl -s -4 ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
+fi
 
 # Use specified IP if provided, otherwise find next available
 if [ -n "$specified_ip" ]; then
@@ -62,10 +97,27 @@ else
     exit 1
 fi
 
-# Перезаписываем значение переменной vap_ip_local в файле variables.sh
-grep -q "vap_ip_local=" variables.sh && sed -i "s/vap_ip_local=.*/vap_ip_local=${vap_ip_local}/" variables.sh || echo "vap_ip_local=${vap_ip_local}" >> variables.sh
+# Update variables in variables.sh file
+VARIABLES_FILE="$SCRIPT_DIR/variables.sh"
+if [ ! -f "$VARIABLES_FILE" ]; then
+    VARIABLES_FILE="$PARENT_DIR/variables.sh"
+fi
 
-echo "ip_address_glob=${ip_address_glob}" >> variables.sh
+# Create or update variables.sh
+if [ -f "$VARIABLES_FILE" ]; then
+    # Update existing file
+    grep -q "vap_ip_local=" "$VARIABLES_FILE" && sed -i "s/vap_ip_local=.*/vap_ip_local=${vap_ip_local}/" "$VARIABLES_FILE" || echo "vap_ip_local=${vap_ip_local}" >> "$VARIABLES_FILE"
+    grep -q "ip_address_glob=" "$VARIABLES_FILE" && sed -i "s/ip_address_glob=.*/ip_address_glob=${ip_address_glob}/" "$VARIABLES_FILE" || echo "ip_address_glob=${ip_address_glob}" >> "$VARIABLES_FILE"
+else
+    # Create new file
+    cat > "$VARIABLES_FILE" << EOF
+vap_ip_local=${vap_ip_local}
+wg_local_ip=10.20.20.1
+wg_local_ip_hint="10.20.20"
+ip_address_glob=${ip_address_glob}
+var_public_key="${var_public_key}"
+EOF
+fi
 echo "Новый клиент ${var_username} добавлен."
 echo "$wg_local_ip_hint.${vap_ip_local} = ${var_username}" >> cofigs.txt
 
