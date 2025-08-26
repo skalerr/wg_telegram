@@ -6,11 +6,11 @@ services:
       dockerfile: Dockerfile
     volumes:
       - /etc/wireguard:/etc/wireguard
-    environment:
-      TELEGRAM_BOT_TOKEN: value
-      AUTHORIZED_USERS: 1234567890
-      WG_LOCAL_IP_HINT: 10.20.20
     network_mode: host
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - AUTHORIZED_USERS=${AUTHORIZED_USERS}
+      - WG_LOCAL_IP_HINT=${WG_LOCAL_IP_HINT}
     # ports:
     #   - 51830:51830/udp
     #    sysctls:
