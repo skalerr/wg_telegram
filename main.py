@@ -111,11 +111,13 @@ class WireGuardBot:
         monitor_btn = types.KeyboardButton("Монитор_клиентов")
         add_btn = types.KeyboardButton("Добавить_конфиг")
         delete_btn = types.KeyboardButton("Удалить_конфиг")
+        recreate_btn = types.KeyboardButton("Пересоздать_конфиги")
         back_btn = types.KeyboardButton("Назад")
         
         markup.add(stats_btn, monitor_btn)
         markup.add(configs_btn)
         markup.add(add_btn, delete_btn)
+        markup.add(recreate_btn)
         markup.add(back_btn)
         self.bot.send_message(message.chat.id, text="📊 Мониторинг VPN сервера", reply_markup=markup)
 
