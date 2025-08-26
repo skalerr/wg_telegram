@@ -243,7 +243,6 @@ class WireGuardBot:
             
             commands = [
                 "wg-quick down wg0",
-                "systemctl disable wg-quick@wg0",
                 "apt-get remove -y wireguard wireguard-tools qrencode",
                 "rm -rf /etc/wireguard",
                 "rm -f /etc/sysctl.d/wg.conf",
@@ -717,9 +716,10 @@ class WireGuardBot:
                     except:
                         size_str = "N/A"
                     
-                    # Format entry with emoji indicators
+                    # Format entry with emoji indicators and escape markdown
                     status_emoji = "🟢"  # Green circle for active
-                    monitor_msg += f"{status_emoji} **{client_name}**\n"
+                    escaped_name = client_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]')
+                    monitor_msg += f"{status_emoji} **{escaped_name}**\n"
                     monitor_msg += f"   🌍 IP: `{config_info['ip']}`\n"
                     monitor_msg += f"   📅 Создан: {time_str}\n"
                     monitor_msg += f"   📄 Размер: {size_str}\n\n"
@@ -825,9 +825,9 @@ class WireGuardBot:
     def get_server_status(self) -> dict:
         """Get WireGuard server status"""
         try:
-            # Check if WireGuard is running
+            # Check if WireGuard is running (use ps instead of systemctl in container)
             result = subprocess.run(
-                ['systemctl', 'is-active', 'wg-quick@wg0'], 
+                ['pgrep', '-f', 'wg-quick.*wg0'], 
                 capture_output=True, 
                 text=True
             )

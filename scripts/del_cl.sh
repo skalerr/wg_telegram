@@ -1,6 +1,8 @@
 #!/bin/bash
 
 ip=$1
+wg_local_ip_hint=${WG_LOCAL_IP_HINT:-"10.20.20"}
+
 my_variable=$(grep -n "AllowedIPs = $wg_local_ip_hint.${ip}/32" /etc/wireguard/wg0.conf | cut -d ':' -f 1)
 
 if [ -z "$my_variable" ]; then
