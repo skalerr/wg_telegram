@@ -1,299 +1,903 @@
 import telebot
-from telebot import types # для указание типов
-import time
-import datetime
+from telebot import types
 import subprocess
-import sys
 import os
 import glob
 import qrcode
-from config import *
-#from config import *
-config = ""
-# Создаем экземпляр бота
-bot = telebot.TeleBot(api_tg)
-
-def save_config(message):
-    global config
-    config = message.text
-    print("----------------")
-    print(config)
-    print("----------------")
-    string = str(config)
-    bot.send_message(message.chat.id, "Настройки конфигурации сохранены")
-    return string
-
-def qr(name_qr, chat_id):
-    # Чтение содержимого файла
-    with open(name_qr, 'r') as file:
-        text = file.read()
-    # Создание объекта QR-кода
-    qr = qrcode.QRCode(version=1, box_size=10, border=5)
-    qr.add_data(text)
-    qr.make(fit=True)
-    # Создание изображения QR-кода
-    img = qr.make_image(fill_color='black', back_color='white')
-    # Сохранение изображения в файл
-    img_path = "my_qrcode.png"
-    img.save("my_qrcode.png")
-    # Отправка QR-кода через Telegram бота
-    with open(img_path, 'rb') as f:
-        bot.send_photo(chat_id=chat_id, photo=f)
-    # Удаление QR-кода
-    os.remove(img_path)
-
-def check_message(message):
-    valid_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_!? ')
-    new_message = ''.join(c if c in valid_chars else '_' for c in message)
-    new_message = new_message.replace(' ', '_')
-    return new_message.lower().strip()
-
-def check_number_in_range(number):
-    try:
-        num = int(number)
-        if 2 <= num <= 253:
-            return True
-        else:
-            return False
-    except ValueError:
-        return False
-
-def buttons(message):
-#    bot.send_message(message.chat.id, text="Привет хозяин")
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    botton32 = types.KeyboardButton("Конфиги")
-    botton42 = types.KeyboardButton("Удалить_конфиг")
-    botton41 = types.KeyboardButton("Добавить_конфиг")
-
-    back = types.KeyboardButton("Назад")
-    markup.add(botton32, botton41, botton42, back)
-    bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
-
-def del_vpn(message):
-    if message.sticker is not None:
-        # Если пользователь отправил стикер вместо текста
-        bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не стикер.')
-        buttons(message)
-    elif message.voice is not None:
-        bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не голосовое сообщение.')
-        buttons(message)
-    elif message.document is not None:
-        bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не документ.')
-        buttons(message)
-    else:
-        # Обработка текстового сообщения
-        bot.reply_to(message, 'Вы отправили текстовое сообщение.')
-        config_string = check_message(message.text)
-        if check_number_in_range(message.text):
-            subprocess.run(['scripts/del_cl.sh', config_string])
-            script_path = os.path.dirname(os.path.realpath(__file__))
-            rm_user_script = os.path.join(script_path, "rm_user.sh")
-            subprocess.run([rm_user_script, config_string])
-            bot.send_message(message.chat.id, f"IP-адрес {wg_local_ip_hint}.{config_string} успешно удален.")
-            print(f"{message.text} находится в допустимом диапазоне.")
-        else:
-            print(f"{message.text} не находится в допустимом диапазоне.")
-            bot.send_message(message.chat.id, f"IP-адрес {wg_local_ip_hint}.{config_string} не может быть удален. Ввведите число от 2 до 253")
-    buttons(message)
+import logging
+from pathlib import Path
+from typing import Optional
+from datetime import datetime
+from config import api_tg, mainid, wg_local_ip_hint
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
-def add_vpn(message):
-    if message.chat.id in mainid:
-#        bot.send_message(message.chat.id, text="Привет избранный!!")
-        if message.sticker is not None:
-            # Если пользователь отправил стикер вместо текста
-            bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не стикер.')
-            buttons(message)
-        elif message.voice is not None:
-            bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не голосовое сообщение.')
-            buttons(message)
-        elif message.document is not None:
-            bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не документ.')
-            buttons(message)
-        else:
-            # Обработка текстового сообщения
-#            bot.reply_to(message, 'Вы отправили текстовое сообщение.')
-            config_string = check_message(message.text)
-            subprocess.run(['scripts/add_cl.sh', config_string])
-            bot.send_message(message.chat.id, f"Конфиг {config_string}.conf создан")
-            config_file_path = f"/etc/wireguard/{config_string}_cl.conf"
-            qr(config_file_path, message.chat.id)
-            with open(config_file_path, 'rb') as file:
-                bot.send_document(message.chat.id, file)
-            with open(config_file_path, 'r') as file:
-                config_content = file.read()
-            bot.send_message(message.chat.id, config_content)
-            bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
-            buttons(message)
-
-# --- Полное удаление WireGuard ---
-def uninstall_wireguard(message):
-    chat_id = message.chat.id
-    bot.send_message(chat_id, "Удаляю WireGuard и конфигурации...")
-    # Останавливаем и отключаем сервис
-    # subprocess.run("wg-quick@wg0", shell=True)
-    subprocess.run("wg-quick down wg0", shell=True)
-    subprocess.run("systemctl disable wg-quick@wg0", shell=True)
-    # Удаляем пакеты
-    subprocess.run("apt-get remove -y wireguard wireguard-tools qrencode", shell=True) #wireguard-tools
-    # Удаляем настройки
-    subprocess.run("rm -rf /etc/wireguard", shell=True)
-    subprocess.run("rm -f /etc/sysctl.d/wg.conf", shell=True)
-    # Применяем sysctl
-    subprocess.run("sysctl --system", shell=True)
+class WireGuardBot:
+    def __init__(self, token: str, authorized_users: list, wg_ip_hint: str):
+        self.bot = telebot.TeleBot(token)
+        self.authorized_users = authorized_users
+        self.wg_ip_hint = wg_ip_hint
+        self.setup_handlers()
     
-    bot.send_message(chat_id, "WireGuard успешно удалён.")
-    buttons(message)
+    def setup_handlers(self):
+        self.bot.message_handler(commands=['start'])(self.start_command)
+        self.bot.message_handler(commands=['id'])(self.id_command)
+        self.bot.message_handler(content_types=['text'])(self.handle_text)
+        self.bot.message_handler(content_types=['sticker'])(self.handle_sticker)
+    
+    def is_authorized(self, chat_id: int) -> bool:
+        return chat_id in self.authorized_users
+    
+    def send_unauthorized_message(self, message):
+        self.bot.send_message(
+            message.chat.id, 
+            f"Привет, {message.from_user.first_name}! Ты заплутал!!"
+        )
 
-@bot.message_handler(commands=['start'])
-def start(message):
-    if message.chat.id in mainid:
-#        bot.send_message(message.chat.id, text="Привет избранный!!")
+    def save_config(self, message):
+        try:
+            config_text = message.text
+            logger.info(f"Saving config: {config_text}")
+            self.bot.send_message(message.chat.id, "Настройки конфигурации сохранены")
+            return config_text
+        except Exception as e:
+            logger.error(f"Error saving config: {e}")
+            self.bot.send_message(message.chat.id, "Ошибка при сохранении конфигурации")
+
+    def generate_qr_code(self, config_path: str, chat_id: int) -> bool:
+        try:
+            if not Path(config_path).exists():
+                logger.error(f"Config file not found: {config_path}")
+                return False
+            
+            with open(config_path, 'r', encoding='utf-8') as file:
+                text = file.read()
+            
+            qr_code = qrcode.QRCode(version=1, box_size=10, border=5)
+            qr_code.add_data(text)
+            qr_code.make(fit=True)
+            
+            img = qr_code.make_image(fill_color='black', back_color='white')
+            img_path = Path("temp_qrcode.png")
+            img.save(img_path)
+            
+            with open(img_path, 'rb') as f:
+                self.bot.send_photo(chat_id=chat_id, photo=f)
+            
+            img_path.unlink()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error generating QR code: {e}")
+            return False
+
+    @staticmethod
+    def sanitize_input(message: str) -> str:
+        valid_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_')
+        sanitized = ''.join(c if c in valid_chars else '_' for c in message)
+        return sanitized.lower().strip()
+
+    @staticmethod
+    def is_valid_ip_octet(number_str: str) -> bool:
+        try:
+            num = int(number_str)
+            return 2 <= num <= 253
+        except ValueError:
+            return False
+
+    def show_main_buttons(self, message):
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        btn1q = types.KeyboardButton("Мониторинг")
-        btn2q = types.KeyboardButton("Администрирование")
-        markup.add(btn1q, btn2q)
-        bot.send_message(message.chat.id, text="{0.first_name}, добро пожаловать в бот управления VPN Wireguard".format(message.from_user), reply_markup=markup)
-    elif(str(message.chat.id) != mainid):
-        bot.send_message(message.chat.id, text="Привет, {0.first_name}! Ты заплутал!!".format(message.from_user))
+        configs_btn = types.KeyboardButton("Конфиги")
+        delete_btn = types.KeyboardButton("Удалить_конфиг")
+        add_btn = types.KeyboardButton("Добавить_конфиг")
+        back_btn = types.KeyboardButton("Назад")
+        
+        markup.add(configs_btn, add_btn, delete_btn, back_btn)
+        self.bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
+    
+    def show_monitoring_menu(self, message):
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        configs_btn = types.KeyboardButton("Конфиги")
+        stats_btn = types.KeyboardButton("Статистика")
+        monitor_btn = types.KeyboardButton("Монитор_клиентов")
+        add_btn = types.KeyboardButton("Добавить_конфиг")
+        delete_btn = types.KeyboardButton("Удалить_конфиг")
+        back_btn = types.KeyboardButton("Назад")
+        
+        markup.add(stats_btn, monitor_btn)
+        markup.add(configs_btn)
+        markup.add(add_btn, delete_btn)
+        markup.add(back_btn)
+        self.bot.send_message(message.chat.id, text="📊 Мониторинг VPN сервера", reply_markup=markup)
 
-@bot.message_handler(content_types=['sticker'])
-def handle_sticker(message):
-    # Обработка сообщения со стикером
-    bot.reply_to(message, 'Вы отправили стикер!')
-
-@bot.message_handler(commands=["id"])
-def id(message):
-    bot.send_message(message.chat.id, text="Id :"+str(message.chat.id)+"\nusername :"+str(message.from_user.username))
-    print(str(message.chat.id))
-
-@bot.message_handler(content_types=['text'])
-def func(message):
-    if message.chat.id in mainid:
-#        bot.send_message(message.chat.id, text="Привет избранный!!")
-        formatted_message = check_message(message.text)
-        print(formatted_message)
-        if not formatted_message:  # Проверяем, что сообщение не пустое
+    def validate_message_type(self, message) -> bool:
+        if message.sticker is not None:
+            self.bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не стикер.')
+            return False
+        elif message.voice is not None:
+            self.bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не голосовое сообщение.')
+            return False
+        elif message.document is not None:
+            self.bot.reply_to(message, 'Пожалуйста, отправьте текстовое сообщение, а не документ.')
+            return False
+        return True
+    
+    def delete_vpn_config(self, message):
+        if not self.validate_message_type(message):
+            self.show_monitoring_menu(message)
             return
-        if(message.text == "Мониторинг"):
-#            bot.send_message(message.chat.id, text="Здесь мониторинг vpn сервера")
-            buttons(message)
-        elif(message.text == "Администрирование"):
-            if (1==1):
-#                bot.send_message(message.chat.id, text="Привет хозяин")
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                botton22 = types.KeyboardButton("Установка_Wireguard")
-                botton23 = types.KeyboardButton("Полное_удаление")
-                botton_reset = types.KeyboardButton("Сохранить_конигурацию")
-                botton_reset_up = types.KeyboardButton("Импортировать_конигурацию")
-                back = types.KeyboardButton("Назад")
-                markup.add(botton22, botton23, botton_reset, botton_reset_up, back)
-                bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
-        elif message.text == "Удалить_конфиг":
-            bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить.", reply_markup=types.ReplyKeyboardRemove())
-            config_file_path_txt = f"cofigs.txt"
-            with open(config_file_path_txt, 'rb') as file:
-                config_content = file.read()
-            bot.send_message(message.chat.id, config_content)
-            bot.send_message(message.chat.id, "Введите последний октет ip, который нужно удалить. Например если нужно удалить ip адресс {wg_local_ip_hint}.47, то введите 47")
-            bot.register_next_step_handler(message, del_vpn)
-        elif message.text == "Добавить_конфиг":
-            bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
-            bot.register_next_step_handler(message, add_vpn)
-        elif message.text == "Полное_удаление":
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            botton_yes = types.KeyboardButton("Да удалить НАВСЕГДА")
-            botton_no = types.KeyboardButton("Нет")
-            markup.add(botton_yes, botton_no)
-            bot.send_message(message.chat.id, text="Wireguard будет удален навсегда со всеми настройками. \nХотите продолжить?", reply_markup=markup)
-        elif (message.text == "ДА УДАЛИТЬ НАВСЕГДА"):
-            uninstall_wireguard(message)
+        
+        try:
+            if not self.is_valid_ip_octet(message.text):
+                self.bot.send_message(
+                    message.chat.id, 
+                    f"IP-адрес не может быть удален. Введите число от 2 до 253"
+                )
+                self.show_monitoring_menu(message)
+                return
+            
+            config_string = self.sanitize_input(message.text)
+            
+            # Execute deletion scripts with error handling
+            result1 = subprocess.run(['scripts/del_cl.sh', config_string], capture_output=True, text=True)
+            if result1.returncode != 0:
+                logger.error(f"Failed to run del_cl.sh: {result1.stderr}")
+                self.bot.send_message(message.chat.id, "Ошибка при удалении конфигурации")
+                return
+            
+            script_path = Path(__file__).parent
+            rm_user_script = script_path / "rm_user.sh"
+            if rm_user_script.exists():
+                result2 = subprocess.run([str(rm_user_script), config_string], capture_output=True, text=True)
+                if result2.returncode != 0:
+                    logger.error(f"Failed to run rm_user.sh: {result2.stderr}")
+            
+            self.bot.send_message(
+                message.chat.id, 
+                f"IP-адрес {self.wg_ip_hint}.{config_string} успешно удален."
+            )
+            logger.info(f"Deleted VPN config for IP {self.wg_ip_hint}.{config_string}")
+            
+        except Exception as e:
+            logger.error(f"Error deleting VPN config: {e}")
+            self.bot.send_message(message.chat.id, "Произошла ошибка при удалении конфигурации")
+        
+        self.show_monitoring_menu(message)
 
-        elif message.text == "Конфиги":
-            bot.send_message(message.chat.id, "Вот ваша конфигурация Wireguard")
-            config_file_path = f"/etc/wireguard/wg0.conf"
+
+
+    def add_vpn_config(self, message):
+        if not self.is_authorized(message.chat.id):
+            self.send_unauthorized_message(message)
+            return
+        
+        if not self.validate_message_type(message):
+            self.show_monitoring_menu(message)
+            return
+        
+        try:
+            config_name = self.sanitize_input(message.text)
+            if not config_name:
+                self.bot.send_message(message.chat.id, "Недопустимое имя конфигурации")
+                self.show_monitoring_menu(message)
+                return
+            
+            # Execute add client script
+            result = subprocess.run(
+                ['scripts/add_cl.sh', config_name], 
+                capture_output=True, 
+                text=True
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"Failed to create VPN config: {result.stderr}")
+                self.bot.send_message(message.chat.id, "Ошибка при создании конфигурации")
+                self.show_monitoring_menu(message)
+                return
+            
+            self.bot.send_message(message.chat.id, f"Конфиг {config_name}.conf создан")
+            
+            config_file_path = Path(f"/etc/wireguard/{config_name}_cl.conf")
+            if not config_file_path.exists():
+                logger.error(f"Config file not found: {config_file_path}")
+                self.bot.send_message(message.chat.id, "Файл конфигурации не найден")
+                self.show_monitoring_menu(message)
+                return
+            
+            # Generate and send QR code
+            if self.generate_qr_code(str(config_file_path), message.chat.id):
+                logger.info(f"QR code sent for config {config_name}")
+            
+            # Send config file
             with open(config_file_path, 'rb') as file:
-                bot.send_document(message.chat.id, file)
-            with open(config_file_path, 'r') as file:
+                self.bot.send_document(message.chat.id, file)
+            
+            with open(config_file_path, 'r', encoding='utf-8') as file:
                 config_content = file.read()
-            bot.send_message(message.chat.id, config_content)
-            file_list = glob.glob('/etc/wireguard/*.conf')
-            for file_path in file_list:
-                if os.path.basename(file_path) != 'wg0.conf':
-                    with open(file_path, 'rb') as file:
-                        bot.send_document(message.chat.id, document=file)
-            config_file_path_txt = f"cofigs.txt"
-            with open(config_file_path_txt, 'rb') as file:
-                config_content = file.read()
-            bot.send_message(message.chat.id, config_content)
-#            bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
-        elif message.text == "Сохранить_конигурацию":
-            subprocess.run(['scripts/backup.sh'])
-            print("ok")
-            bot.send_message(message.chat.id, text="Резервная копия создана")
-        elif message.text == "Импортировать_конигурацию":
-            subprocess.run(['scripts/restore.sh'])
-            print("ok2")
-            bot.send_message(message.chat.id, text="Резервная копия импортированна")
-        elif message.text == "Установка_Wireguard":
-            # Проверка наличия файла
-            file_path = '/etc/wireguard/wg0.conf'
-            if os.path.isfile(file_path):
-                print(f"Файл {file_path} существует.")
-#                bot.send_message(message.chat.id, "Wireguard уже настроен. \nХотите настроить заново?")
-#                bot.send_message(message.chat.id, "Хотите установить все заново?")
-#                bot.send_message(message.chat.id, text="Привет хозяин")
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                botton_yes = types.KeyboardButton("Да")
-                botton_no = types.KeyboardButton("Нет")
-                markup.add(botton_yes, botton_no)
-                bot.send_message(message.chat.id, text="Wireguard уже настроен. \nХотите настроить заново?", reply_markup=markup)
-            else:
-                print(f"Файла {file_path} не существует.")
-                bot.send_message(message.chat.id, "Запускаю установку Wireguard. \nПожалуйста дождитесь завершения установки.")
-                subprocess.run(['scripts/start_wg.sh'])
-                bot.send_message(message.chat.id, "Установка Wireguard завершена")
-        elif (message.text == "Да"):
-            bot.send_message(message.chat.id, "Удаляю конфиги!")
-            command = "rm variables.sh && rm -r /etc/wireguard/ && mkdir /etc/wireguard/ && rm cofigs.txt"
-            subprocess.run(command, shell=True)
-#            # Удаление файла variables.sh
-#            subprocess.run("rm variables.sh", shell=True)
-#            # Удаление каталога /etc/wireguard/
-#            subprocess.run("rm -r /etc/wireguard/", shell=True)
-#            # Пауза для обеспечения времени на завершение предыдущей команды
-#            time.sleep(10)
-#            # Создание каталога /etc/wireguard/
-#            subprocess.run("mkdir /etc/wireguard/", shell=True)
-#            # Удаление файла cofigs.txt
-#            subproces.run("rm cofigs.txt", shell=True)
-            bot.send_message(message.chat.id, "Запускаю установку Wireguard")
-            subprocess.run(['scripts/start_wg.sh'])
-            bot.send_message(message.chat.id, "Установка Wireguard завершена")
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            button1 = types.KeyboardButton("Мониторинг")
-            button2 = types.KeyboardButton("Администрирование")
-            markup.add(button1, button2)
-            bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
-        elif (message.text == "Нет"):
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            button1 = types.KeyboardButton("Мониторинг")
-            button2 = types.KeyboardButton("Администрирование")
-            markup.add(button1, button2)
-            bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
-        elif (message.text == "Назад"):
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            button1 = types.KeyboardButton("Мониторинг")
-            button2 = types.KeyboardButton("Администрирование")
-            markup.add(button1, button2)
-            bot.send_message(message.chat.id, text="Назад", reply_markup=markup)
-        else:
-            bot.send_message(message.chat.id, text="На такую комманду я не запрограммировал..")
-        message_text = message.text
-        print(message_text)
-    elif(str(message.chat.id) != mainid):
-        bot.send_message(message.chat.id, text="Привет, {0.first_name}! Ты заплутал!!".format(message.from_user))
+            
+            self.bot.send_message(message.chat.id, config_content)
+            self.bot.send_message(message.chat.id, "Конфигурационный файл успешно отправлен.")
+            logger.info(f"Created and sent VPN config: {config_name}")
+            
+        except Exception as e:
+            logger.error(f"Error creating VPN config: {e}")
+            self.bot.send_message(message.chat.id, "Произошла ошибка при создании конфигурации")
+        
+        self.show_monitoring_menu(message)
 
-bot.polling(none_stop=True)
+    def uninstall_wireguard(self, message):
+        try:
+            chat_id = message.chat.id
+            self.bot.send_message(chat_id, "Удаляю WireGuard и конфигурации...")
+            
+            commands = [
+                "wg-quick down wg0",
+                "systemctl disable wg-quick@wg0",
+                "apt-get remove -y wireguard wireguard-tools qrencode",
+                "rm -rf /etc/wireguard",
+                "rm -f /etc/sysctl.d/wg.conf",
+                "sysctl --system"
+            ]
+            
+            for cmd in commands:
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                if result.returncode != 0:
+                    logger.warning(f"Command failed: {cmd}, error: {result.stderr}")
+            
+            self.bot.send_message(chat_id, "WireGuard успешно удалён.")
+            logger.info("WireGuard uninstalled successfully")
+            
+        except Exception as e:
+            logger.error(f"Error uninstalling WireGuard: {e}")
+            self.bot.send_message(message.chat.id, "Ошибка при удалении WireGuard")
+        
+        self.show_monitoring_menu(message)
+
+    def start_command(self, message):
+        if self.is_authorized(message.chat.id):
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            monitoring_btn = types.KeyboardButton("Мониторинг")
+            admin_btn = types.KeyboardButton("Администрирование")
+            markup.add(monitoring_btn, admin_btn)
+            
+            welcome_text = f"{message.from_user.first_name}, добро пожаловать в бот управления VPN Wireguard"
+            self.bot.send_message(message.chat.id, text=welcome_text, reply_markup=markup)
+            logger.info(f"User {message.from_user.username} ({message.chat.id}) started the bot")
+        else:
+            self.send_unauthorized_message(message)
+            logger.warning(f"Unauthorized access attempt from {message.chat.id}")
+
+    def handle_sticker(self, message):
+        self.bot.reply_to(message, 'Вы отправили стикер!')
+
+    def id_command(self, message):
+        user_info = f"Id: {message.chat.id}\nusername: {message.from_user.username}"
+        self.bot.send_message(message.chat.id, text=user_info)
+        logger.info(f"ID command used by {message.chat.id}")
+
+    def handle_text(self, message):
+        if not self.is_authorized(message.chat.id):
+            self.send_unauthorized_message(message)
+            return
+        
+        text = message.text.strip()
+        if not text:
+            return
+        
+        logger.info(f"User {message.chat.id} sent: {text}")
+        
+        if text == "Мониторинг":
+            self.show_monitoring_menu(message)
+        elif text == "Администрирование":
+            self.show_admin_menu(message)
+        elif text == "Удалить_конфиг":
+            self.prompt_delete_config(message)
+        elif text == "Добавить_конфиг":
+            self.bot.send_message(message.chat.id, "Введите название нового конфига", reply_markup=types.ReplyKeyboardRemove())
+            self.bot.register_next_step_handler(message, self.add_vpn_config)
+        elif text == "Полное_удаление":
+            self.confirm_uninstall(message)
+        elif text == "Да удалить НАВСЕГДА":
+            self.uninstall_wireguard(message)
+
+        elif text == "Конфиги":
+            self.send_configs(message)
+        elif text == "Сохранить_конигурацию":
+            self.backup_config(message)
+        elif text == "Импортировать_конигурацию":
+            self.restore_config(message)
+        elif text == "Пересоздать_конфиги":
+            self.recreate_configs(message)
+        elif text == "Статистика":
+            self.show_statistics(message)
+        elif text == "Монитор_клиентов":
+            self.show_clients_monitor(message)
+        elif text == "Установка_Wireguard":
+            self.install_wireguard(message)
+        elif text == "Да":
+            self.reinstall_wireguard(message)
+        elif text == "Нет":
+            self.show_main_menu(message)
+        elif text == "Назад":
+            self.show_main_menu(message)
+        else:
+            self.bot.send_message(message.chat.id, text="На такую команду я не запрограммировал..")
+            logger.info(f"Unknown command from user {message.chat.id}: {text}")
+    
+    def show_main_menu(self, message):
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        monitoring_btn = types.KeyboardButton("Мониторинг")
+        admin_btn = types.KeyboardButton("Администрирование")
+        markup.add(monitoring_btn, admin_btn)
+        self.bot.send_message(message.chat.id, text="Меню", reply_markup=markup)
+    
+    def show_admin_menu(self, message):
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        install_btn = types.KeyboardButton("Установка_Wireguard")
+        uninstall_btn = types.KeyboardButton("Полное_удаление")
+        backup_btn = types.KeyboardButton("Сохранить_конигурацию")
+        restore_btn = types.KeyboardButton("Импортировать_конигурацию")
+        back_btn = types.KeyboardButton("Назад")
+        markup.add(install_btn, uninstall_btn, backup_btn, restore_btn, back_btn)
+        self.bot.send_message(message.chat.id, text="Выполни запрос", reply_markup=markup)
+    
+    def confirm_uninstall(self, message):
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        yes_btn = types.KeyboardButton("Да удалить НАВСЕГДА")
+        no_btn = types.KeyboardButton("Нет")
+        markup.add(yes_btn, no_btn)
+        self.bot.send_message(
+            message.chat.id, 
+            text="Wireguard будет удален навсегда со всеми настройками.\nХотите продолжить?", 
+            reply_markup=markup
+        )
+    
+    def prompt_delete_config(self, message):
+        self.bot.send_message(
+            message.chat.id, 
+            "Введите последний октет IP, который нужно удалить.", 
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        
+        try:
+            configs_file = Path("configs.txt")
+            if configs_file.exists():
+                with open(configs_file, 'r', encoding='utf-8') as file:
+                    config_content = file.read()
+                self.bot.send_message(message.chat.id, config_content)
+        except Exception as e:
+            logger.error(f"Error reading configs file: {e}")
+        
+        self.bot.send_message(
+            message.chat.id, 
+            f"Введите последний октет IP. Например, для удаления {self.wg_ip_hint}.47 введите 47"
+        )
+        self.bot.register_next_step_handler(message, self.delete_vpn_config)
+    
+    def send_configs(self, message):
+        try:
+            self.bot.send_message(message.chat.id, "📁 Получение конфигураций WireGuard...")
+            
+            # Get client configurations info first
+            configs = self.scan_existing_configs()
+            
+            # Send summary first
+            if configs:
+                summary_msg = f"📋 **Список конфигураций ({len(configs)} клиентов):**\n\n"
+                
+                sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
+                for client_name, config_info in sorted_configs:
+                    summary_msg += f"👤 **{client_name}** - {config_info['ip']}\n"
+                
+                self.bot.send_message(message.chat.id, summary_msg, parse_mode='Markdown')
+            
+            # Send main server config file
+            main_config = Path("/etc/wireguard/wg0.conf")
+            if main_config.exists():
+                self.bot.send_message(message.chat.id, "🗺 Основная конфигурация сервера:")
+                with open(main_config, 'rb') as file:
+                    self.bot.send_document(message.chat.id, file, caption="🗺 wg0.conf - конфигурация сервера")
+            
+            # Send client configs with better organization
+            if configs:
+                self.bot.send_message(message.chat.id, f"📦 Отправляю клиентские конфигурации ({len(configs)} файлов)...")
+                
+                sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
+                for client_name, config_info in sorted_configs:
+                    try:
+                        with open(config_info['file'], 'rb') as file:
+                            caption = f"👤 {client_name} - {config_info['ip']}"
+                            self.bot.send_document(message.chat.id, document=file, caption=caption)
+                    except Exception as e:
+                        logger.error(f"Error sending config file {config_info['file']}: {e}")
+                        self.bot.send_message(
+                            message.chat.id, 
+                            f"⚠️ Ошибка отправки {client_name}: {str(e)[:100]}"
+                        )
+            else:
+                self.bot.send_message(message.chat.id, "⚠️ Клиентские конфигурации не найдены")
+            
+            # Send configs summary file if exists
+            configs_file = Path("configs.txt")
+            if configs_file.exists():
+                with open(configs_file, 'rb') as file:
+                    self.bot.send_document(
+                        message.chat.id, 
+                        file, 
+                        caption="📄 Сводка конфигураций"
+                    )
+            
+            self.bot.send_message(message.chat.id, "✅ Все конфигурации отправлены")
+            logger.info(f"Sent configs for {len(configs)} clients")
+            
+        except Exception as e:
+            logger.error(f"Error sending configs: {e}")
+            self.bot.send_message(message.chat.id, "❌ Ошибка при отправке конфигураций")
+    
+    def backup_config(self, message):
+        try:
+            result = subprocess.run(['scripts/backup.sh'], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.bot.send_message(message.chat.id, "Резервная копия создана")
+                logger.info("Configuration backed up successfully")
+            else:
+                logger.error(f"Backup failed: {result.stderr}")
+                self.bot.send_message(message.chat.id, "Ошибка при создании резервной копии")
+        except Exception as e:
+            logger.error(f"Error during backup: {e}")
+            self.bot.send_message(message.chat.id, "Ошибка при создании резервной копии")
+    
+    def restore_config(self, message):
+        try:
+            result = subprocess.run(['scripts/restore.sh'], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.bot.send_message(message.chat.id, "Резервная копия импортирована")
+                logger.info("Configuration restored successfully")
+            else:
+                logger.error(f"Restore failed: {result.stderr}")
+                self.bot.send_message(message.chat.id, "Ошибка при восстановлении резервной копии")
+        except Exception as e:
+            logger.error(f"Error during restore: {e}")
+            self.bot.send_message(message.chat.id, "Ошибка при восстановлении резервной копии")
+    
+    def install_wireguard(self, message):
+        config_file = Path('/etc/wireguard/wg0.conf')
+        
+        if config_file.exists():
+            logger.info(f"WireGuard config already exists: {config_file}")
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            yes_btn = types.KeyboardButton("Да")
+            no_btn = types.KeyboardButton("Нет")
+            markup.add(yes_btn, no_btn)
+            self.bot.send_message(
+                message.chat.id, 
+                text="Wireguard уже настроен.\nХотите настроить заново?", 
+                reply_markup=markup
+            )
+        else:
+            logger.info(f"WireGuard config not found: {config_file}")
+            self.bot.send_message(
+                message.chat.id, 
+                "Запускаю установку Wireguard.\nПожалуйста дождитесь завершения установки."
+            )
+            self._run_wireguard_install(message)
+    
+    def reinstall_wireguard(self, message):
+        try:
+            self.bot.send_message(message.chat.id, "Удаляю конфиги...")
+            
+            cleanup_commands = [
+                "rm -f variables.sh",
+                "rm -rf /etc/wireguard/",
+                "mkdir -p /etc/wireguard/",
+                "rm -f configs.txt"
+            ]
+            
+            for cmd in cleanup_commands:
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                if result.returncode != 0:
+                    logger.warning(f"Cleanup command failed: {cmd}, error: {result.stderr}")
+            
+            self.bot.send_message(message.chat.id, "Запускаю установку Wireguard")
+            self._run_wireguard_install(message)
+            
+        except Exception as e:
+            logger.error(f"Error during WireGuard reinstallation: {e}")
+            self.bot.send_message(message.chat.id, "Ошибка при переустановке WireGuard")
+        
+        self.show_main_menu(message)
+    
+    def _run_wireguard_install(self, message):
+        try:
+            result = subprocess.run(['scripts/start_wg.sh'], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.bot.send_message(message.chat.id, "Установка Wireguard завершена")
+                logger.info("WireGuard installation completed successfully")
+            else:
+                logger.error(f"WireGuard installation failed: {result.stderr}")
+                self.bot.send_message(message.chat.id, "Ошибка при установке WireGuard")
+        except Exception as e:
+            logger.error(f"Error running WireGuard installation: {e}")
+            self.bot.send_message(message.chat.id, "Ошибка при установке WireGuard")
+    
+    def scan_existing_configs(self) -> dict:
+        """Scan /etc/wireguard/ for existing client configurations"""
+        configs = {}
+        wireguard_dir = Path('/etc/wireguard')
+        
+        if not wireguard_dir.exists():
+            logger.warning("WireGuard directory does not exist")
+            return configs
+        
+        try:
+            # Find all client config files
+            client_configs = list(wireguard_dir.glob('*_cl.conf'))
+            
+            for config_file in client_configs:
+                try:
+                    # Extract client name from filename (remove _cl.conf suffix)
+                    client_name = config_file.stem.replace('_cl', '')
+                    
+                    # Read config to extract IP
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    # Extract IP from Address line
+                    ip_address = None
+                    for line in content.split('\n'):
+                        if line.strip().startswith('Address = '):
+                            address_line = line.strip().replace('Address = ', '')
+                            # Extract IP without subnet mask
+                            ip_address = address_line.split('/')[0]
+                            break
+                    
+                    if ip_address:
+                        # Extract last octet
+                        last_octet = ip_address.split('.')[-1]
+                        configs[client_name] = {
+                            'file': config_file,
+                            'ip': ip_address,
+                            'octet': last_octet
+                        }
+                        logger.info(f"Found config: {client_name} -> {ip_address}")
+                    
+                except Exception as e:
+                    logger.error(f"Error reading config {config_file}: {e}")
+                    continue
+            
+        except Exception as e:
+            logger.error(f"Error scanning WireGuard directory: {e}")
+        
+        return configs
+    
+    def recreate_configs_file(self, configs: dict) -> bool:
+        """Recreate the configs.txt file based on existing configurations"""
+        try:
+            configs_content = []
+            configs_content.append("# WireGuard Client Configurations")
+            configs_content.append(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            configs_content.append("")
+            
+            if not configs:
+                configs_content.append("No client configurations found.")
+            else:
+                configs_content.append(f"Total clients: {len(configs)}")
+                configs_content.append("")
+                configs_content.append("Client configurations:")
+                
+                # Sort by octet number
+                sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
+                
+                for client_name, config_info in sorted_configs:
+                    configs_content.append(f"  {client_name}: {config_info['ip']} (octet: {config_info['octet']})")
+            
+            # Write to configs.txt
+            configs_file = Path('configs.txt')
+            with open(configs_file, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(configs_content))
+            
+            logger.info(f"Recreated configs.txt with {len(configs)} entries")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error recreating configs file: {e}")
+            return False
+    
+    def recreate_configs(self, message):
+        """Recreate configuration files based on existing WireGuard configs"""
+        try:
+            self.bot.send_message(message.chat.id, "🔄 Сканирование существующих конфигураций...")
+            
+            # Scan existing configurations
+            configs = self.scan_existing_configs()
+            
+            if not configs:
+                self.bot.send_message(
+                    message.chat.id, 
+                    "⚠️ Не найдено клиентских конфигураций в /etc/wireguard/"
+                )
+                logger.info("No client configurations found for recreation")
+                return
+            
+            # Recreate configs.txt file
+            if self.recreate_configs_file(configs):
+                success_msg = f"✅ Пересоздано конфигураций: {len(configs)}\n\n"
+                success_msg += "Найденные клиенты:\n"
+                
+                # Sort by octet for display
+                sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
+                for client_name, config_info in sorted_configs[:10]:  # Show max 10 entries
+                    success_msg += f"• {client_name}: {config_info['ip']}\n"
+                
+                if len(configs) > 10:
+                    success_msg += f"... и ещё {len(configs) - 10} клиентов\n"
+                
+                self.bot.send_message(message.chat.id, success_msg)
+                
+                # Send the recreated configs.txt file
+                try:
+                    with open('configs.txt', 'rb') as f:
+                        self.bot.send_document(
+                            message.chat.id, 
+                            f, 
+                            caption="📄 Пересозданный файл конфигураций"
+                        )
+                except Exception as e:
+                    logger.error(f"Error sending recreated configs file: {e}")
+                
+                logger.info(f"Successfully recreated configs for {len(configs)} clients")
+            else:
+                self.bot.send_message(
+                    message.chat.id, 
+                    "❌ Ошибка при пересоздании файла конфигураций"
+                )
+                
+        except Exception as e:
+            logger.error(f"Error during configs recreation: {e}")
+            self.bot.send_message(
+                message.chat.id, 
+                "❌ Произошла ошибка при пересоздании конфигураций"
+            )
+    
+    def show_clients_monitor(self, message):
+        """Show detailed client monitoring with IPs and config names"""
+        try:
+            self.bot.send_message(message.chat.id, "🔍 Получение списка клиентов...")
+            
+            # Scan existing configurations
+            configs = self.scan_existing_configs()
+            
+            if not configs:
+                self.bot.send_message(
+                    message.chat.id, 
+                    "⚠️ Клиентские конфигурации не найдены"
+                )
+                return
+            
+            # Build detailed client list
+            monitor_msg = f"👥 **Монитор клиентов WireGuard**\n\n"
+            monitor_msg += f"📊 **Общая статистика:**\n"
+            monitor_msg += f"• Активных клиентов: {len(configs)}\n"
+            
+            # Sort by IP octet for organized display
+            sorted_configs = sorted(configs.items(), key=lambda x: int(x[1]['octet']))
+            
+            monitor_msg += f"\n🗺 **Список клиентов:**\n"
+            
+            # Group clients for better display (max 20 per message)
+            chunks = [sorted_configs[i:i+20] for i in range(0, len(sorted_configs), 20)]
+            
+            for chunk_idx, chunk in enumerate(chunks):
+                if chunk_idx > 0:
+                    monitor_msg = f"\n🗺 **Продолжение списка клиентов:**\n"
+                
+                for client_name, config_info in chunk:
+                    # Get file modification time
+                    try:
+                        mod_time = datetime.fromtimestamp(config_info['file'].stat().st_mtime)
+                        time_str = mod_time.strftime('%d.%m %H:%M')
+                    except:
+                        time_str = "N/A"
+                    
+                    # Get file size
+                    try:
+                        file_size = config_info['file'].stat().st_size
+                        size_str = f"{file_size}B" if file_size < 1024 else f"{file_size//1024}KB"
+                    except:
+                        size_str = "N/A"
+                    
+                    # Format entry with emoji indicators
+                    status_emoji = "🟢"  # Green circle for active
+                    monitor_msg += f"{status_emoji} **{client_name}**\n"
+                    monitor_msg += f"   🌍 IP: `{config_info['ip']}`\n"
+                    monitor_msg += f"   📅 Создан: {time_str}\n"
+                    monitor_msg += f"   📄 Размер: {size_str}\n\n"
+                
+                # Send message (split if too long)
+                if len(monitor_msg) > 4000:
+                    self.bot.send_message(message.chat.id, monitor_msg, parse_mode='Markdown')
+                    monitor_msg = ""
+            
+            # Send remaining content
+            if monitor_msg:
+                self.bot.send_message(message.chat.id, monitor_msg, parse_mode='Markdown')
+            
+            # Add summary at the end
+            if len(configs) > 20:
+                summary_msg = f"\n📊 **Сводка:**\n"
+                octets = [int(config['octet']) for config in configs.values()]
+                used_octets = set(octets)
+                available_octets = set(range(2, 254)) - used_octets
+                
+                summary_msg += f"• Используемые IP: {min(octets)}-{max(octets)}\n"
+                summary_msg += f"• Свободно IP: {len(available_octets)}\n"
+                
+                # Show next available IPs
+                next_available = sorted(available_octets)[:5]
+                if next_available:
+                    ips_str = ", ".join([f"{self.wg_ip_hint}.{octet}" for octet in next_available])
+                    summary_msg += f"• Ближайшие свободные: {ips_str}\n"
+                
+                self.bot.send_message(message.chat.id, summary_msg, parse_mode='Markdown')
+            
+            logger.info(f"Client monitoring displayed for {len(configs)} clients")
+            
+        except Exception as e:
+            logger.error(f"Error showing client monitor: {e}")
+            self.bot.send_message(
+                message.chat.id, 
+                "❌ Ошибка при получении списка клиентов"
+            )
+    
+    def show_statistics(self, message):
+        """Show WireGuard server statistics"""
+        try:
+            self.bot.send_message(message.chat.id, "📊 Сбор статистики...")
+            
+            # Scan existing configurations
+            configs = self.scan_existing_configs()
+            
+            # Get server status
+            server_status = self.get_server_status()
+            
+            # Build statistics message
+            stats_msg = "📊 **Статистика WireGuard сервера**\n\n"
+            
+            # Server info
+            stats_msg += f"🟢 **Статус сервера:** {server_status['status']}\n"
+            if server_status.get('interface'):
+                stats_msg += f"🔌 **Интерфейс:** {server_status['interface']}\n"
+            
+            # Client statistics
+            stats_msg += f"\n👥 **Клиентские конфигурации:**\n"
+            stats_msg += f"• Всего клиентов: {len(configs)}\n"
+            
+            if configs:
+                # IP range analysis
+                octets = [int(config['octet']) for config in configs.values()]
+                stats_msg += f"• Диапазон IP: {self.wg_ip_hint}.{min(octets)} - {self.wg_ip_hint}.{max(octets)}\n"
+                
+                # Available IPs
+                used_octets = set(octets)
+                available_octets = set(range(2, 254)) - used_octets
+                stats_msg += f"• Свободных IP: {len(available_octets)}\n"
+                
+                # Recent configs
+                stats_msg += f"\n🗓 **Последние клиенты:**\n"
+                sorted_configs = sorted(
+                    configs.items(), 
+                    key=lambda x: x[1]['file'].stat().st_mtime, 
+                    reverse=True
+                )[:5]
+                
+                for client_name, config_info in sorted_configs:
+                    mod_time = datetime.fromtimestamp(config_info['file'].stat().st_mtime)
+                    stats_msg += f"• **{client_name}** ({config_info['ip']}) - {mod_time.strftime('%d.%m.%Y %H:%M')}\n"
+            else:
+                stats_msg += "• Клиентские конфигурации не найдены\n"
+            
+            # System info
+            system_info = self.get_system_info()
+            if system_info:
+                stats_msg += f"\n💻 **Системная информация:**\n{system_info}"
+            
+            self.bot.send_message(message.chat.id, stats_msg, parse_mode='Markdown')
+            logger.info(f"Statistics shown for {len(configs)} clients")
+            
+        except Exception as e:
+            logger.error(f"Error showing statistics: {e}")
+            self.bot.send_message(
+                message.chat.id, 
+                "❌ Ошибка при сборе статистики"
+            )
+    
+    def get_server_status(self) -> dict:
+        """Get WireGuard server status"""
+        try:
+            # Check if WireGuard is running
+            result = subprocess.run(
+                ['systemctl', 'is-active', 'wg-quick@wg0'], 
+                capture_output=True, 
+                text=True
+            )
+            
+            status = "✅ Активен" if result.returncode == 0 else "❌ Неактивен"
+            
+            # Get interface info if active
+            interface_info = None
+            if result.returncode == 0:
+                wg_result = subprocess.run(['wg', 'show'], capture_output=True, text=True)
+                if wg_result.returncode == 0 and wg_result.stdout:
+                    interface_info = "wg0"
+            
+            return {
+                'status': status,
+                'interface': interface_info
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting server status: {e}")
+            return {'status': '❓ Неизвестно'}
+    
+    def get_system_info(self) -> str:
+        """Get basic system information"""
+        try:
+            info_parts = []
+            
+            # Disk usage for /etc/wireguard
+            try:
+                wg_dir = Path('/etc/wireguard')
+                if wg_dir.exists():
+                    total_size = sum(f.stat().st_size for f in wg_dir.rglob('*') if f.is_file())
+                    info_parts.append(f"• Размер конфигов: {total_size / 1024:.1f} KB")
+            except:
+                pass
+            
+            # Uptime (simplified)
+            try:
+                uptime_result = subprocess.run(['uptime', '-p'], capture_output=True, text=True)
+                if uptime_result.returncode == 0:
+                    info_parts.append(f"• Uptime: {uptime_result.stdout.strip()}")
+            except:
+                pass
+            
+            return '\n'.join(info_parts) if info_parts else None
+            
+        except Exception as e:
+            logger.error(f"Error getting system info: {e}")
+            return None
+
+def main():
+    try:
+        if not api_tg:
+            logger.error("Telegram API token not configured")
+            return
+        
+        if not mainid:
+            logger.error("No authorized users configured")
+            return
+        
+        wg_bot = WireGuardBot(api_tg, mainid, wg_local_ip_hint)
+        logger.info("Starting WireGuard Telegram Bot...")
+        logger.info(f"Authorized users: {mainid}")
+        wg_bot.bot.polling(none_stop=True, interval=0)
+        
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.critical(f"Critical error: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
 
